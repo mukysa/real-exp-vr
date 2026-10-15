@@ -16,10 +16,11 @@ Quick links:
 - [LeRobot docs](../lerobot/README.md)
 - [Wuji glove teleoperation](wuji/README.md)
 
-Environment split used in this repo:
+Environment split for the current client/server GELLO collection setup:
 
-- Use `/usr/bin/python3` (Python 3.10 on this machine) for ROS 2 Humble, GELLO helper scripts, `colcon build`, and ROS 2 episode replay. Install `numpy` and `pyarrow` in this environment because replay reads LeRobot Parquet files.
-- Use the `lerobot` Conda environment for collection, dataset processing, and training.
+- On the robot-control client, use system ROS 2 Humble and `/usr/bin/python3` (Python 3.10) for GELLO helper scripts, the ROS build and controllers, and ROS 2 episode replay. Replay needs `numpy` and `pyarrow` in this system Python because it reads LeRobot Parquet files.
+- On the data server, use system ROS 2 Jazzy and `/usr/bin/python3` for the RealSense publisher, ROS-to-ZMQ bridge, and ROS build. Do not run these ROS processes inside Conda.
+- On the data server, use the `lerobot-vr` Conda environment for the LeRobot recorder, dataset processing, and validation. Its LeRobot editable install should resolve to `~/real-exp-vr/lerobot`. Training dependencies have not been validated as part of this collection setup.
 
 
 ## Before launching
@@ -142,7 +143,7 @@ initialization), and only then runs the episode replay:
 
 ```bash
 bash scripts/replay.sh \
-  --dataset-root data/test-pick-and-place-new \
+  --dataset-root data/test \
   --episode 0
 ```
 
@@ -153,7 +154,7 @@ Select the stored arm representation with `--replay-mode joint` or
 ```bash
 # Replay the stored joint targets directly.
 bash scripts/replay.sh \
-  --dataset-root data/test-pick-and-place-new \
+  --dataset-root data/test \
   --episode 0 \
   --replay-mode joint
 
@@ -334,11 +335,11 @@ single-arm variant is:
 ./scripts/start_data_collection_server.sh --single --gripper
 ```
 
-Start the recorder on the server (in the `lerobot` environment) and leave its
+Start the recorder on the server (in the `lerobot-vr` environment) and leave its
 host set to the server address:
 
 ```bash
-conda activate lerobot
+conda activate lerobot-vr
 python data_collection/lerobot_collection.py \
   --host 192.168.50.13 --port 5555 \
   --local-dir ./lerobot_data
@@ -414,11 +415,14 @@ stop its processes.
 
 ## Dataset Validation
 
+Run the processing and validation commands below on the data server, from the
+`real-exp-vr` checkout, with `conda activate lerobot-vr`.
+
 After recording a dataset, process it before validation. First preview the initial
 static-segment trimming plan:
 
 ```bash
-python3 data_collection/process_dataset.py trim-initial \
+python data_collection/process_dataset.py trim-initial \
   --dataset-root data/pick_and_place_test \
   --motion-threshold 0.002 \
   --min-static-frames 5 \
@@ -429,7 +433,7 @@ Review the proposed trim counts, then remove `--dry-run` to create the processed
 dataset:
 
 ```bash
-python3 data_collection/process_dataset.py trim-initial \
+python data_collection/process_dataset.py trim-initial \
   --dataset-root data/pick_and_place_test \
   --motion-threshold 0.002 \
   --min-static-frames 5
@@ -449,14 +453,14 @@ still agree.
 Run the default validation:
 
 ```bash
-python3 data_collection/validate_dataset.py \
+python data_collection/validate_dataset.py \
   --dataset-root data/pick_and_place_test
 ```
 
 Print one row per episode:
 
 ```bash
-python3 data_collection/validate_dataset.py \
+python data_collection/validate_dataset.py \
   --dataset-root data/pick_and_place_test \
   --verbose
 ```
@@ -492,12 +496,12 @@ checks.
 If OpenCV is not available in the active Python environment, either install it or skip physical video checks:
 
 ```bash
-python3 data_collection/validate_dataset.py \
+python data_collection/validate_dataset.py \
   --dataset-root data/pick_and_place_test \
   --skip-video-frames
 ```
 
-Run validation from the `lerobot` Conda environment. The standard video checks
+Run validation from the `lerobot-vr` Conda environment. The standard video checks
 require TorchCodec; do not use `--skip-video-frames` as a pre-training check.
 
 ## Repairing Older AV1 Data
@@ -507,7 +511,7 @@ when TorchCodec seeks to a later frame during training. Re-encode such a dataset
 to H.264 with a retained original backup:
 
 ```bash
-conda activate lerobot
+conda activate lerobot-vr
 python data_collection/reencode_dataset_videos.py \
   --dataset-root data/pick_and_place_test
 python data_collection/validate_dataset.py \

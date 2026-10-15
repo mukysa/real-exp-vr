@@ -117,14 +117,20 @@ gripper_config_dir="${repository_root}/gello_software/ros2/src/franka_gripper_ma
 # Do not let ROS overlays inherited from an interactive shell select packages
 # from a different checkout. The setup files below rebuild the required ROS
 # paths in a deterministic order.
+# Match the isolated data-collection client environment (system ROS Python).
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+unset PYTHONHOME CMAKE_PREFIX_PATH COLCON_CURRENT_PREFIX AMENT_CURRENT_PREFIX
+unset COLCON_PYTHON_EXECUTABLE AMENT_PYTHON_EXECUTABLE
 unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH PYTHONPATH LD_LIBRARY_PATH
+export REAL_EXP_ROS_INSTALL_PREFIX="${REAL_EXP_ROS_INSTALL_PREFIX:-${repository_root}/gello_software/ros2/install/client}"
+[[ -r "${REAL_EXP_ROS_INSTALL_PREFIX}/local_setup.bash" ]] || die "Client ROS build is missing. Run scripts/build_data_collection_client.sh first."
 
 setup_files=(
   "/opt/ros/humble/setup.bash"
   # Use local_setup for overlays so a generated setup.bash cannot pull in a
   # stale workspace path from the machine where that workspace was built.
   "${HOME}/franka_ros2_ws/install/local_setup.bash"
-  "${REAL_EXP_ROS_INSTALL_PREFIX:-${repository_root}/gello_software/ros2/install}/local_setup.bash"
+  "${REAL_EXP_ROS_INSTALL_PREFIX}/local_setup.bash"
 )
 
 # Generated ROS environment hooks may inspect optional variables before defining them.
@@ -526,7 +532,7 @@ example_dir="${repository_root}/libs/wuji-retargeting/example"
 teleop_program="${repository_root}/utils/wuji_telemetry_proxy.py"
 
 [[ -r "${teleop_program}" ]] || die "Wuji teleoperation adapter not found: ${teleop_program}"
-wuji_conda_env="${WUJI_CONDA_ENV:-${LEROBOT_CONDA_ENV:-lerobot}}"
+wuji_conda_env="${WUJI_CONDA_ENV:-${LEROBOT_CONDA_ENV:-lerobot-vr}}"
 declare -a wuji_python=()
 real_exp_build_conda_python_command "${wuji_conda_env}" wuji_python || exit 1
 command -v setsid >/dev/null 2>&1 || die "required command not found: setsid"
