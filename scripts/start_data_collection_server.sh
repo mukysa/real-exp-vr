@@ -120,7 +120,11 @@ else
   ros_distro="$(basename -- "$(dirname -- "${ros_setup_file}")")"
 fi
 
+export LEROBOT_CONDA_ENV="${LEROBOT_CONDA_ENV:-lerobot-vr}"
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH PYTHONPATH LD_LIBRARY_PATH
+unset PYTHONHOME CMAKE_PREFIX_PATH COLCON_CURRENT_PREFIX AMENT_CURRENT_PREFIX
+unset COLCON_PYTHON_EXECUTABLE AMENT_PYTHON_EXECUTABLE
 
 setup_files=(
   "${ros_setup_file}"
@@ -128,7 +132,10 @@ setup_files=(
 if [[ -r "${HOME}/franka_ros2_ws/install/local_setup.bash" ]]; then
   setup_files+=("${HOME}/franka_ros2_ws/install/local_setup.bash")
 fi
-setup_files+=("${repository_root}/gello_software/ros2/install/local_setup.bash")
+server_install="${repository_root}/gello_software/ros2/install/server"
+[[ -r "${server_install}/local_setup.bash" ]] || die \
+  "Server ROS build is missing. Run scripts/build_data_collection_server.sh first."
+setup_files+=("${server_install}/local_setup.bash")
 
 # ROS setup hooks may inspect unset variables.
 set +u
@@ -174,6 +181,15 @@ print(f"Ready: FR3 target-pose FK backend is {kinematics.backend}")
 PY
 then
   die "FR3 target-pose FK preflight failed in ${ros_python}; update the repository and restart"
+fi
+
+# Check the recorder environment before starting camera or bridge processes.
+if [[ "${record}" -eq 1 ]]; then
+  lerobot_conda_env="${LEROBOT_CONDA_ENV}"
+  declare -a recorder_python=()
+  real_exp_build_conda_python_command "${lerobot_conda_env}" recorder_python || exit 1
+  real_exp_require_conda_python_modules "${lerobot_conda_env}" lerobot pyarrow zmq numpy || die \
+    "the '${lerobot_conda_env}' Conda environment is missing LeRobot recorder dependencies"
 fi
 
 # The bridge package calls the left-arm configuration "example_single.yaml"
@@ -280,11 +296,6 @@ for topic in "${required_bridge_topics[@]}"; do
 done
 
 if [[ "${record}" -eq 1 ]]; then
-  lerobot_conda_env="${LEROBOT_CONDA_ENV:-lerobot}"
-  declare -a recorder_python=()
-  real_exp_build_conda_python_command "${lerobot_conda_env}" recorder_python || exit 1
-  real_exp_require_conda_python_modules "${lerobot_conda_env}" lerobot pyarrow zmq numpy || die \
-    "the '${lerobot_conda_env}' Conda environment is missing LeRobot recorder dependencies"
   start_process "LeRobot recorder" \
     "${recorder_python[@]}" "${repository_root}/data_collection/lerobot_collection.py" \
     --host "${bridge_host}" --port "${bridge_port}" \

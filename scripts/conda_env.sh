@@ -31,8 +31,8 @@ real_exp_build_conda_python_command() {
   local conda_executable
   local -n output_command="${output_name}"
 
-  if [[ "${CONDA_DEFAULT_ENV:-}" == "${environment_name}" ]] && command -v python >/dev/null 2>&1; then
-    output_command=(env PYTHONPATH= LD_LIBRARY_PATH= python)
+  if [[ "${CONDA_DEFAULT_ENV:-}" == "${environment_name}" && -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+    output_command=(env -u PYTHONHOME PYTHONPATH= LD_LIBRARY_PATH= "${CONDA_PREFIX}/bin/python")
     return 0
   fi
 
@@ -43,7 +43,7 @@ real_exp_build_conda_python_command() {
   }
   output_command=(
     "${conda_executable}" run --no-capture-output --name "${environment_name}"
-    env PYTHONPATH= LD_LIBRARY_PATH= python
+    env -u PYTHONHOME PYTHONPATH= LD_LIBRARY_PATH= python
   )
 }
 

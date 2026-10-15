@@ -1,6 +1,6 @@
 # VR 数采升级：现状与待办
 
-审查日期：2026-10-14。
+审查日期：2026-10-15（新增 server 本机迁移记录）。
 
 快速导航：
 
@@ -14,7 +14,33 @@
 
 # 一、最新工作状态
 
-**当前位置：client ROS 路径与构建隔离已完成，GELLO 端到端采集尚未验收。下一步先验证“新 client + 原 server”，再迁移 server，最后进入 VR 接入阶段。**
+**当前位置：client ROS 隔离已完成；server 的独立 ROS 构建和 recorder 默认环境切换已完成，LeRobot Conda editable 已重新绑定并复核。GELLO 端到端采集尚未验收，VR 尚未接入。**
+
+## Server 本机迁移（2026-10-15）
+
+本轮机器为 server `/home/pair1/real-exp-vr`。下文 `/home/landau` 和“当前机器是 client”的描述均为此前 client 阶段记录，不代表 server 的实际路径。
+
+- 新增 `scripts/build_data_collection_server.sh`，沿用 client 的干净系统环境及独立构建方式，仅构建 `franka_lerobot_data_bridge` 和 `franka_realsense_camera_publisher`；产物位于 `gello_software/ros2/{build,install,log}/server`。支持 `DATA_SERVER_ROS_DISTRO`，本机自动选择 Jazzy。
+- server 启动器加载 `install/server/local_setup.bash`，清理继承的 Conda/ROS 搜索路径；recorder 默认 `LEROBOT_CONDA_ENV=lerobot-vr`，仍允许显式覆盖。录制依赖预检移到设备进程启动之前。
+- 共享 Conda helper 在已激活目标环境时使用 `${CONDA_PREFIX}/bin/python` 的绝对路径，避免 server 清理 PATH 后误用系统 Python，同时清除继承的 PYTHONHOME。
+- 本机 ROS Jazzy 使用系统 Python 3.12.3；recorder 使用 `/home/pair1/miniconda3/envs/lerobot-vr` 的 Python 3.12.13。ROS 不迁入 Conda。
+- **已完成绑定**：用户已在本机终端重新安装 LeRobot editable；复核安装元数据指向 `/home/pair1/real-exp-vr/lerobot`，清除 PYTHONPATH 后普通导入也解析到当前副本。recorder 导入、H.264 写入和 TorchCodec 读回复核通过。下面保留复现命令，无需重复安装。Wuji editable 未处理，不宣称整个 Conda 环境的所有包均已隔离。
+
+```bash
+cd /home/pair1/real-exp-vr
+./scripts/build_data_collection_server.sh
+# 仅重新绑定当前环境的 LeRobot，不升级依赖：
+env -u PYTHONHOME PYTHONPATH= LD_LIBRARY_PATH= /home/pair1/miniconda3/envs/lerobot-vr/bin/python -m pip install --no-deps --no-build-isolation -e /home/pair1/real-exp-vr/lerobot
+# 绑定后检查普通导入：
+env PYTHONPATH= LD_LIBRARY_PATH= /home/pair1/miniconda3/envs/lerobot-vr/bin/python -c 'import lerobot; print(lerobot.__file__)'
+```
+
+验证结果：两个 ROS 包构建成功；模块实际路径、包前缀均位于当前副本；ROS 搜索路径无旧 real-exp 或 landau 引用；相机和 bridge 的 launch 参数解析通过；FK 使用 NumPy 后端；base 和已激活 lerobot-vr 两种状态下 Conda helper 均选中新环境解释器；Shell 语法及 diff 检查通过。此前本轮 server 审查中 recorder 导入和 H.264 写入、TorchCodec 读回通过。
+
+现有 Python 测试实际结果：`test_lerobot_collection.py`、`test_mode_aware_dataset.py`、`test_validate_dataset.py` 合计 5 passed / 14 failed（测试与当前 schema-v2、动作和 EE 布局不一致）；`test_trajectory_metadata.py`、`test_schema_v2_transport.py` 合计 4 passed / 3 failed（三项失败缺少 data 下测试数据集）。本轮未修改相关 Python 业务代码或测试，不能声明完整回归通过。
+
+仍待处理：NumPy/cmeel-boost 与 protobuf/wandb 的 pip check 冲突；相机在线、跨机 DDS、真实短 episode 写入和校验。未启动真实设备，未修改系统 Python/ROS、公共 Franka 工作空间或旧 Conda 环境；未提交或推送 GitHub。
+
 
 ## 已完成：GELLO client ROS 路径与构建隔离（2026-10-14）
 
