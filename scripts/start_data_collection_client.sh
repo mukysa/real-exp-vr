@@ -48,6 +48,21 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 arm_side="--${arm_mode}"
 teleop_launcher="${script_dir}/start_teleoperation.sh"
 
+if [[ "${data_mode}" != "hand" ]]; then
+  # Use this checkout's client-only build, not copied install hooks that may
+  # still reference the original workspace. ROS runs with system Python.
+  repository_root="$(cd -- "${script_dir}/.." && pwd)"
+  export REAL_EXP_ROS_INSTALL_PREFIX="${repository_root}/gello_software/ros2/install/client"
+  [[ -r "${REAL_EXP_ROS_INSTALL_PREFIX}/local_setup.bash" ]] || {
+    echo "Client ROS build is missing. Run scripts/build_data_collection_client.sh first." >&2
+    exit 1
+  }
+  export LEROBOT_CONDA_ENV=lerobot-vr
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  unset PYTHONHOME CMAKE_PREFIX_PATH COLCON_CURRENT_PREFIX AMENT_CURRENT_PREFIX
+  unset COLCON_PYTHON_EXECUTABLE AMENT_PYTHON_EXECUTABLE
+fi
+
 if [[ "${data_mode}" == "gripper" ]]; then
   exec "${teleop_launcher}" --gripper "${arm_side}"
 elif [[ "${data_mode}" == "arm" ]]; then

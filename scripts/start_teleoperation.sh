@@ -124,7 +124,7 @@ setup_files=(
   # Use local_setup for overlays so a generated setup.bash cannot pull in a
   # stale workspace path from the machine where that workspace was built.
   "${HOME}/franka_ros2_ws/install/local_setup.bash"
-  "${repository_root}/gello_software/ros2/install/local_setup.bash"
+  "${REAL_EXP_ROS_INSTALL_PREFIX:-${repository_root}/gello_software/ros2/install}/local_setup.bash"
 )
 
 # Generated ROS environment hooks may inspect optional variables before defining them.
