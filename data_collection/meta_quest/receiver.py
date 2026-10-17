@@ -15,6 +15,8 @@ from .protocol import PoseSample, ProtocolError, parse_pose_line
 class ReceivedPose:
     sample: PoseSample
     received_monotonic_s: float
+    sequence: int
+    connection_id: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +49,7 @@ class PoseReceiver:
         self._accepted_connections = 0
         self._pose_records = 0
         self._rejected_pose_records = 0
+        self._next_sequence = 1
         self._server: socket.socket | None = None
         self._accept_thread: threading.Thread | None = None
         self._connection_threads: set[threading.Thread] = set()
@@ -78,18 +81,20 @@ class PoseReceiver:
             except OSError:
                 break
             connection.settimeout(0.5)
+            with self._lock:
+                self._accepted_connections += 1
+                connection_id = self._accepted_connections
             thread = threading.Thread(
                 target=self._connection_loop,
-                args=(connection,),
+                args=(connection, connection_id),
                 name="meta-quest-pose-connection",
                 daemon=True,
             )
             with self._lock:
-                self._accepted_connections += 1
                 self._connection_threads.add(thread)
             thread.start()
 
-    def _connection_loop(self, connection: socket.socket) -> None:
+    def _connection_loop(self, connection: socket.socket, connection_id: int) -> None:
         buffer = ""
         try:
             with connection:
@@ -103,14 +108,14 @@ class PoseReceiver:
                     buffer += chunk.decode("utf-8", errors="replace")
                     while "\n" in buffer:
                         line, buffer = buffer.split("\n", 1)
-                        self._record_line(line.rstrip("\r"))
+                        self._record_line(line.rstrip("\r"), connection_id)
         finally:
             if buffer.strip():
-                self._record_line(buffer.strip())
+                self._record_line(buffer.strip(), connection_id)
             with self._lock:
                 self._connection_threads.discard(threading.current_thread())
 
-    def _record_line(self, line: str) -> None:
+    def _record_line(self, line: str, connection_id: int = 0) -> None:
         try:
             sample = parse_pose_line(line)
         except ProtocolError:
@@ -120,9 +125,16 @@ class PoseReceiver:
         if sample is None:
             return
         received_at = time.monotonic()
-        received = ReceivedPose(sample=sample, received_monotonic_s=received_at)
         key = (sample.source, sample.side)
         with self._lock:
+            sequence = self._next_sequence
+            self._next_sequence += 1
+            received = ReceivedPose(
+                sample=sample,
+                received_monotonic_s=received_at,
+                sequence=sequence,
+                connection_id=connection_id,
+            )
             self._poses[key] = received
             times = self._receive_times.setdefault(key, deque())
             times.append(received_at)
