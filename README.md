@@ -50,6 +50,39 @@ changing the calling shell. Set `LEROBOT_CONDA_ENV`, `WUJI_CONDA_ENV`, or
 - [`scripts/start_data_collection_server.sh`](scripts/start_data_collection_server.sh): start the data-server RealSense publishers, ROS bridge, and optional recorder.
 - [`scripts/replay.sh`](scripts/replay.sh): start the dual-arm FR3 replay controllers and Franka-hand managers, then replay a recorded LeRobot episode.
 
+### Meta Quest input status (client, 2026-10-17)
+
+Stage 1 hardware input validation is complete on the client. A Quest 3 and both
+Touch controllers were received through the controller-enabled Hand Tracking
+Streamer APK over USB/ADB TCP port 8000. Both controllers produced independent
+6-DoF poses at roughly 45--52 Hz, button/control fields changed as expected,
+and the host parser reported zero rejected pose records. This validation is
+pose-only: it does not start GELLO, command a Franka, or record a LeRobot
+episode.
+
+Use the existing robot-disconnected launcher:
+
+```bash
+cd /home/landau/real-exp-vr
+conda activate lerobot-vr
+unset PYTHONPATH PYTHONHOME
+./scripts/start_meta_quest_pose_monitor.sh
+```
+
+For a headless SSH session, add `--no-visualization`. In Hand Tracking Streamer
+select `TCP (Wired / ADB)`, `127.0.0.1`, port `8000`, and `Controllers Only`.
+The application settings panel is operated with Quest hand tracking in the
+current APK; controller UI rays are not configured. The panel intentionally
+disappears after **Start Streaming**.
+
+The monitor prints a 1 Hz summary of the latest in-memory poses. It does **not**
+save the full-rate input stream. The Stage 1 evidence log is
+`logs/quest-input-stage1-20261017.log`; it is a terminal summary log, not a
+training dataset. See [VR-import.md](VR-import.md) for the acceptance record,
+known design issues, and remaining safety work, and see
+[data_collection/meta_quest/README.md](data_collection/meta_quest/README.md) for
+the transport and protocol details.
+
 ### Train
 
 - Training instructions live in [train/TRAIN_README.md](train/TRAIN_README.md).

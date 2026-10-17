@@ -19,16 +19,16 @@ Hand Tracking Streamer on Quest
   -> 1 Hz terminal report plus live controller-pose visualization
 ```
 
-The upstream `v1.1.0` application streams left/right wrist poses and hand
-landmarks. The lab headset currently has a controller-enabled build of the same
-application package; this receiver also accepts its Touch-controller pose
-records. The controller extension is not present in upstream `v1.1.0`, so a
-reproducible Quest-side controller build remains future work.
-
-Do not commit a locally modified submodule state for that extension: other
-clones could not fetch it. The durable options are to contribute controller
-support upstream or maintain a reachable project fork/branch and update the
-submodule URL and gitlink to that commit.
+The tested headset application is the controller-enabled
+`maniskill-shadowhand` branch of
+`Soo0803/VR-hand-tracking-and-controller`, commit
+`a8f16e376d1090b93a5ba314e8d9afd0f3a7b7a3`. Android reports package
+`com.wengmister.handtrackingstreamer`, version name `1.1.0`, version code `7`.
+The archived APK is
+`downloads/hand_tracking_streamer-maniskill-shadowhand.apk`, SHA-256
+`e0b41ab36e0bcbbc1a1d616bd659bad6d93c02efcb332c1d87c2bee1c6e04879`.
+The version name alone therefore does not distinguish this controller build
+from upstream releases; use the source commit and APK digest above.
 
 ## Start a safe pose-only test
 
@@ -52,6 +52,15 @@ tracked side. The configuration panel intentionally disappears while streaming,
 so seeing only passthrough in the headset at that point is normal. Press the
 flat **Menu** button on the left controller to stop streaming and restore the
 panel. Stop the computer-side monitor with `Ctrl+C`.
+
+The current Unity scene only auto-links `LeftHandRayInteractor` and
+`RightHandRayInteractor` for menu interaction; it does not configure controller
+UI rays. Enable Quest system hand tracking and use a pinch gesture to configure
+the page. This is a Quest application limitation, not a controller connection
+failure. The app also gates its Start button on Unity's
+`Application.internetReachability`, even for ADB loopback, so Wi-Fi currently
+has to be connected although the telemetry itself travels over USB. A future
+APK should remove that network gate for wired mode and add controller UI input.
 
 The launcher initially restores normal physical-proximity behavior. The monitor
 requests Quest's mounted/awake state only after it receives the first controller
@@ -79,6 +88,36 @@ labels the front-trigger value as `grasp`; the final two flags correspond to
 the B-button clutch and A-button recording controls used by the controller
 build. They are displayed for input verification only and do not command a
 robot.
+
+The receiver keeps only the latest pose for each source in memory. The monitor
+prints a summary at `--print-hz` (1 Hz by default); neither component persists
+every incoming controller packet. Redirecting terminal output creates a
+diagnostic summary log, not a raw 45--52 Hz trajectory and not a LeRobot
+dataset. A dedicated raw recorder with device/host timestamps, frame identity,
+tracking validity and explicit episode boundaries is required before collection.
+
+## Stage 1 result (2026-10-17)
+
+The client hardware path was validated with a Quest 3 running Android 14:
+
+```text
+Quest 3 + left/right Touch controllers
+  -> Hand Tracking Streamer controller build
+  -> adb reverse tcp:8000 tcp:8000
+  -> PoseReceiver / monitor in lerobot-vr Python 3.12.13
+```
+
+The final snapshot reported `connections=12 poses=3659 rejected=0`. Both sides
+showed independent position and quaternion changes. Left input was observed at
+about 45--51 Hz and right input at about 44--52 Hz. Non-zero `grasp` occurred
+on both sides; `record=1` was observed on the left and `clutch=1` on the right.
+These observations validate transport and parsing, not the final robot-control
+button assignment. The physical-button mapping must be deliberately frozen and
+edge/debounce tested when the teleoperation state machine is implemented.
+
+Evidence is in `logs/quest-input-stage1-20261017.log`. It contains the 1 Hz
+monitor snapshots and is not sufficient for replaying the original full-rate
+motion.
 
 If port 8000 is already occupied, stop the old listener first. ADB reverse
 rules are cleared whenever the ADB server or device transport restarts; the

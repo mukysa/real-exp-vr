@@ -1,10 +1,12 @@
 # VR 数采升级：现状与待办
 
-更新日期：2026-10-15。只维护当前结论、复现入口与未完成任务；历史过程查 Git。
+更新日期：2026-10-16。只维护当前结论、复现入口与未完成任务；历史过程查 Git。
 
 ## 当前结论
 
 两端独立 ROS 构建及 server recorder 迁移已完成。用户确认新 client/server 的双臂 Franka 夹爪 GELLO 采集、校验与回放通过；server data/test 已完成 trim-initial 的 dry-run、正式裁剪及完整 validate_dataset 校验。可以进入单右臂 VR 接入，VR 尚未实现。
+
+当前阶段只固化 GELLO 兼容契约和 VR 旁路边界。直接在 client 的 `/home/landau/real-exp-vr` 中继续开发，不创建独立工作区；在 client 完成 Quest 单右臂摇操前，不同步或修改 server，也不重做已经通过的 GELLO 真机测试。
 
 其他 arm/gripper 组合暂不单独测试，不阻塞主线，也不标记为实机通过。本机 data/test 旧副本未确认同步 server 处理结果，不能据此否定 server 验收。
 
@@ -73,13 +75,40 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
 - **验证边界**：构建、静态配置检查、离线单元测试、fake hardware 联调和真实采集分别记录，不能互相替代。本阶段没有授权启动真实机器人控制，实机联调由用户另行安排。
 - **按实际依赖处理**：不为使用 lerobot-vr 而把 ROS 强行迁入 Python 3.12，不整体安装 ms3 环境快照，不把 client 不使用的视频或训练依赖当作 GELLO 控制前置条件。
 - **迁移与功能改造分开验收**：先建立原 GELLO 流程的隔离基线，再引入 VR，便于定位故障来源。
-
-
 - **状态维护**：完成后就地更新结论并删除过时待办，不在开头累积历史日志或保留矛盾状态。
+
+## GELLO 兼容契约与 VR 旁路边界
+
+以下内容作为后续 client 改造的硬约束：
+
+- 原 GELLO 入口 `scripts/start_data_collection_client.sh` 和 `scripts/start_teleoperation.sh` 的现有参数、默认行为及启动顺序保持不变；VR 首期不在这两个入口中增加默认分支。
+- GELLO 命令与 accepted target 继续使用 `/{side}/gello/raw_joint_states` 和 `/{side}/gello/accepted_joint_states`，消息类型、七关节名称与顺序、弧度单位及控制器默认参数保持不变。
+- 历史 schema-v2 数据继续可读、可校验和可回放；动作仍来自控制器实际接受的目标，并保持 `q_target[t+1] - q_measured[t]` 语义。VR 原始位姿或未经控制器接受的 IK 输出不能代替 accepted target。
+- VR 作为独立命令源旁路新增，首期只做右臂。计划使用独立启动入口 `scripts/start_vr_teleoperation_client.sh`、命令话题 `/right/vr/raw_joint_states` 和 accepted target `/right/vr/accepted_joint_states`；这些名称在代码实现前只是接口约定，不表示功能已经存在。
+- GELLO 和 VR 启动入口必须互斥，同一机械臂同一时刻只允许一个命令源；首期不实现运行中热切换，也不以 topic remap 让两个发布者同时连接同一控制器输入。
+- VR 可以复用现有 FR3 关节阻抗控制器及安全检查，但任何新增配置必须保留 GELLO 默认值。若需给 launch 增加可选 command/accepted topic 参数，未传参时必须得到与当前 GELLO 完全相同的配置。
+- client 首先独立完成 `Quest 输入 -> 坐标/锚点/安全状态机 -> FR3 IK -> VR joint target -> controller accepted target`。在该链路完成离线、fake hardware 和用户安排的摇操验证前，不修改 server bridge、recorder、数据 schema 或 `dataset/test`。
+
+计划中的 client 结构为：
+
+```text
+现有 GELLO（保留）
+  GELLO publisher -> /right/gello/raw_joint_states
+                  -> FR3 controller
+                  -> /right/gello/accepted_joint_states
+
+新增 VR（尚未实现）
+  Quest receiver -> 坐标映射/相对锚定/安全状态机 -> FR3 IK
+                 -> /right/vr/raw_joint_states
+                 -> FR3 controller
+                 -> /right/vr/accepted_joint_states
+```
+
+本阶段只确认上述契约和结构，不实现 Quest 控制、IK、MANUS、Sharpa 或 server 数采适配。
 
 ## VR 接入参考
 
-- Client 承担 Quest 输入、坐标转换、离合、约束及 FR3 IK；server 沿用相机、bridge 与 recorder，适配输入模式预检和录制事件。
+- Client 承担 Quest 输入、坐标转换、离合、约束及 FR3 IK；client 摇操验证完成后，server 再沿用相机、bridge 与 recorder，并适配输入模式预检和录制事件。
 - 优先采用 VR 位姿 → FR3 IK → 现有关节控制器 → accepted target → bridge → recorder。保留 GELLO 默认行为，运行时只允许唯一命令源。
 - 保持既有动作 q_target[t+1] - q_measured[t] 及夹爪字段语义；目标必须来自控制器实际接受的目标。
 - Quest 参考 [meta_quest/README.md](data_collection/meta_quest/README.md)。DexArena 参考 /home/landau/yys/DexArena/data_gen/teleop/ 下的 io.py、wrist_servo.py、arm_ik.py；先确认 APK、协议、坐标手性、四元数顺序与工具偏置，再适配 FR3。
@@ -105,7 +134,7 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
 
 - [ ] 实现或适配在线 FR3 IK，测量延迟、连续性和奇异点行为。
 - [ ] 配置 VR 命令话题与 accepted target。
-- [ ] 适配 bridge、启动预检和 watchdog。
+- [ ] 在 client 侧实现启动预检和 watchdog；bridge 适配推迟到 client 摇操通过之后。
 - [ ] 用 fake hardware、离线数据或隔离的目标发布验证命令链路。
 - [ ] 回归 GELLO 启动、采集、历史数据读取与回放。
 
