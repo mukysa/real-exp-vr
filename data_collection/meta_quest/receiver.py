@@ -7,6 +7,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from queue import Full, Queue
 
 from .protocol import PoseSample, ProtocolError, parse_pose_line
 
@@ -17,6 +18,42 @@ class ReceivedPose:
     received_monotonic_s: float
     sequence: int
     connection_id: int
+
+
+class PoseSubscription:
+    """A bounded, non-blocking stream of every accepted pose record."""
+
+    def __init__(self, max_queue_size: int) -> None:
+        if max_queue_size <= 0:
+            raise ValueError("max_queue_size must be positive")
+        self._queue: Queue[ReceivedPose] = Queue(maxsize=max_queue_size)
+        self._lock = threading.Lock()
+        self._dropped_records = 0
+        self._closed = False
+
+    @property
+    def dropped_records(self) -> int:
+        with self._lock:
+            return self._dropped_records
+
+    def get(self, timeout: float | None = None) -> ReceivedPose:
+        return self._queue.get(timeout=timeout)
+
+    def get_nowait(self) -> ReceivedPose:
+        return self._queue.get_nowait()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+
+    def _offer(self, pose: ReceivedPose) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            try:
+                self._queue.put_nowait(pose)
+            except Full:
+                self._dropped_records += 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +90,20 @@ class PoseReceiver:
         self._server: socket.socket | None = None
         self._accept_thread: threading.Thread | None = None
         self._connection_threads: set[threading.Thread] = set()
+        self._subscriptions: set[PoseSubscription] = set()
+
+    def subscribe(self, max_queue_size: int = 4096) -> PoseSubscription:
+        """Subscribe to every future valid pose without blocking TCP receive threads."""
+
+        subscription = PoseSubscription(max_queue_size)
+        with self._lock:
+            self._subscriptions.add(subscription)
+        return subscription
+
+    def unsubscribe(self, subscription: PoseSubscription) -> None:
+        with self._lock:
+            self._subscriptions.discard(subscription)
+        subscription.close()
 
     def start(self) -> None:
         if self._server is not None:
@@ -140,6 +191,8 @@ class PoseReceiver:
             times.append(received_at)
             self._trim_receive_times(times, received_at)
             self._pose_records += 1
+            for subscription in self._subscriptions:
+                subscription._offer(received)
 
     def snapshot(self) -> ReceiverSnapshot:
         now = time.monotonic()
@@ -176,6 +229,13 @@ class PoseReceiver:
             threads = list(self._connection_threads)
         for thread in threads:
             thread.join(timeout=1.0)
+        # Keep subscriptions attached until connection threads have flushed any
+        # final unterminated line from their socket buffer.
+        with self._lock:
+            subscriptions = list(self._subscriptions)
+            self._subscriptions.clear()
+        for subscription in subscriptions:
+            subscription.close()
 
     def __enter__(self) -> "PoseReceiver":
         self.start()

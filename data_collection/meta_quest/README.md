@@ -96,6 +96,41 @@ diagnostic summary log, not a raw 45--52 Hz trajectory and not a LeRobot
 dataset. A dedicated raw recorder with device/host timestamps, frame identity,
 tracking validity and explicit episode boundaries is required before collection.
 
+## Full-rate raw recording and replay
+
+Stage 2.2 adds a robot-disconnected JSONL recorder. It stores every validated
+pose delivered by `PoseReceiver`, including its global sequence number, TCP
+connection id and host monotonic receive time. Start it after activating the
+`lerobot-vr` environment:
+
+```bash
+cd /home/landau/real-exp-vr
+unset PYTHONPATH PYTHONHOME
+./scripts/record_meta_quest_raw.sh \
+  --output recordings/quest_raw/stage2-input.jsonl
+```
+
+Stop with `Ctrl+C`, or pass `--duration-s 120`. The writer first creates a
+`.jsonl.partial` file and renames it only after a clean close and summary
+record. Existing output files are never overwritten. Large captures under
+`recordings/quest_raw/` are ignored by Git.
+
+Validate without waiting for the original timing:
+
+```bash
+python -m data_collection.meta_quest.replay \
+  recordings/quest_raw/stage2-input.jsonl --no-sleep
+```
+
+Use `--summary-only` to inspect only the count/loss status, or `--speed 2` for
+two-times playback. A capture with a missing completion summary is rejected. A
+completed capture with subscriber queue drops remains available for diagnosis
+but is reported as `LOSSY` and must not become a reference fixture.
+
+The recorder/replayer and local TCP path have automated coverage. A real Quest
+capture is intentionally deferred until the operator is present; this command
+does not start ROS, GELLO, Franka, MANUS, Sharpa or the server recorder.
+
 ## Stage 1 result (2026-10-17)
 
 The client hardware path was validated with a Quest 3 running Android 14:

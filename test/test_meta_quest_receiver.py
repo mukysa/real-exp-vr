@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import socket
 import time
+from queue import Empty
+
+import pytest
 
 from data_collection.meta_quest.receiver import PoseReceiver
 
@@ -66,3 +69,25 @@ def test_connection_id_is_stable_within_connection_and_changes_after_reconnect()
         reconnected = second_snapshot.poses[("controller", "right")]
         assert reconnected.connection_id > right.connection_id
         assert reconnected.sequence > left.sequence
+
+
+def test_subscribers_receive_independent_ordered_streams_without_blocking() -> None:
+    receiver = PoseReceiver()
+    small = receiver.subscribe(max_queue_size=2)
+    complete = receiver.subscribe(max_queue_size=4)
+
+    receiver._record_line(RIGHT)
+    receiver._record_line(LEFT)
+    receiver._record_line(RIGHT)
+
+    assert [small.get_nowait().sequence, small.get_nowait().sequence] == [1, 2]
+    assert small.dropped_records == 1
+    assert [complete.get_nowait().sequence for _ in range(3)] == [1, 2, 3]
+    assert complete.dropped_records == 0
+    assert receiver.snapshot().pose_records == 3
+
+    receiver.unsubscribe(small)
+    receiver.unsubscribe(complete)
+    receiver._record_line(LEFT)
+    with pytest.raises(Empty):
+        complete.get_nowait()

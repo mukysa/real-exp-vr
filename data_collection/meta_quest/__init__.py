@@ -7,10 +7,12 @@ from .calibration import (
     PoseCalibrator,
     RigidPose,
 )
-from .receiver import PoseReceiver, ReceivedPose, ReceiverSnapshot
+from .models import TargetPose
+from .receiver import PoseReceiver, PoseSubscription, ReceivedPose, ReceiverSnapshot
 
 __all__ = [
     "PoseReceiver",
+    "PoseSubscription",
     "PoseCalibration",
     "PoseCalibrator",
     "PoseSample",
@@ -18,6 +20,7 @@ __all__ = [
     "ReceivedPose",
     "ReceiverSnapshot",
     "RigidPose",
+    "TargetPose",
     "CalibrationButtonEdge",
     "parse_pose_line",
 ]
