@@ -1,10 +1,10 @@
 # VR 数采升级：现状与待办
 
-更新日期：2026-10-16。只维护当前结论、复现入口与未完成任务；历史过程查 Git。
+更新日期：2026-10-17。只维护当前结论、复现入口与未完成任务；历史过程查 Git。
 
 ## 当前结论
 
-两端独立 ROS 构建及 server recorder 迁移已完成。用户确认新 client/server 的双臂 Franka 夹爪 GELLO 采集、校验与回放通过；server data/test 已完成 trim-initial 的 dry-run、正式裁剪及完整 validate_dataset 校验。可以进入单右臂 VR 接入，VR 尚未实现。
+两端独立 ROS 构建及 server recorder 迁移已完成。用户确认新 client/server 的双臂 Franka 夹爪 GELLO 采集、校验与回放通过；server data/test 已完成 trim-initial 的 dry-run、正式裁剪及完整 validate_dataset 校验。Quest 阶段 2 输入、坐标映射、相对锚定、安全状态机和离线回放已完成，可以进入 P2 FR3 离线 IK 与 fake hardware 适配；尚未连接真实机器人。
 
 当前阶段只固化 GELLO 兼容契约和 VR 旁路边界。直接在 client 的 `/home/landau/real-exp-vr` 中继续开发，不创建独立工作区；在 client 完成 Quest 单右臂摇操前，不同步或修改 server，也不重做已经通过的 GELLO 真机测试。
 
@@ -123,13 +123,15 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
 
 - [x] 固定 APK、源码与当前 controller 协议；物理按钮到最终接管/夹爪/录制语义仍待真机冻结。
 - [x] 统一输入适配器，复用 TCP receiver，并为每个有效包增加全局 sequence、TCP connection id 和主机接收时间。
-- [x] 实现非阻塞全速 JSONL 录制、完整性汇总和确定性回放；本地 200 包 TCP 测试无丢包，真实 Quest 录制待操作者到场。
-- [ ] 测试坐标手性、四元数顺序、六自由度运动方向和工具偏置。
-- [ ] 实现锚点标定、clutch-relative 跟随/保持状态机。
-- [ ] 加入位姿整形、冻结检测、超时保持、工作空间和速度约束。
-- [ ] 离线验证重连、recenter、离合切换无目标跳变。
+- [x] 实现非阻塞全速 JSONL 录制、完整性汇总和确定性回放；只读夹具 `stage2-sixdof-safety3.jsonl` 已验证 3945 包、无拒收、无队列丢包，SHA-256 为 `2d84d7eb95cebb133998711684fe98038b862a47b72939a10eadf9beadbf7a66`。
+- [x] 验证坐标手性、四元数顺序和六自由度运动方向。实测按上、右、前的顺序与 `robot_x=quest_z, robot_y=-quest_x, robot_z=quest_y` 一致，两次 pitch 也与旋转分量一致；固定工具偏置的代码接口已实现，实际数值留到 FR3 末端工具确认时标定。
+- [x] 实现锚点标定、clutch-relative 跟随/保持状态机；正常保持与故障保持分离，接管、恢复和重复锚定均保持上一安全目标。
+- [x] 加入可观测输入范围内的安全检查：host 到达超时、重连、显式 tracking、源位姿跳变、目标速度、工作空间和四元数连续性。紧凑协议缺少 frame id、设备时间戳和显式 recenter，因此不能可靠区分静止与设备帧冻结；这项协议限制必须在真机启用条件中保留。
+- [x] 离线验证离合切换、重复锚定、超时及连接变化不会造成目标跳变。`safety3` 的三个锚点跳变均为零，最大连续有效目标位移约 0.010 m；实测断流进入 `FAULT_HOLD`。采集策略确定为 TCP 连接变化即判当前 episode 无效并整条重采，不跨连接恢复或拼接数据。
 
 验收：坐标映射正确；异常输入不会触发目标跳变；陈旧数据进入保持。
+
+`stage2-sixdof-safety3.jsonl` 仅作为阶段 2 坐标与安全回放夹具，不是训练数据。它包含一次实际断流和连接变化，正好用于验证故障保持；正式 episode 必须只有一个 TCP connection id。P1 在当前紧凑协议可观测范围内收尾，recenter/冻结不可区分是已知限制，不用恢复式重连测试阻塞 P2 离线 IK。
 
 ### P2：FR3 控制适配
 

@@ -127,9 +127,23 @@ two-times playback. A capture with a missing completion summary is rejected. A
 completed capture with subscriber queue drops remains available for diagnosis
 but is reported as `LOSSY` and must not become a reference fixture.
 
-The recorder/replayer and local TCP path have automated coverage. A real Quest
-capture is intentionally deferred until the operator is present; this command
-does not start ROS, GELLO, Franka, MANUS, Sharpa or the server recorder.
+The retained real full-rate stage-2 capture is the read-only test fixture
+`recordings/quest_raw/stage2-sixdof-safety3.jsonl`. It contains 3,945 lossless
+poses (43 left and 3,902 right) and has SHA-256:
+
+```text
+2d84d7eb95cebb133998711684fe98038b862a47b72939a10eadf9beadbf7a66
+```
+
+The capture deliberately includes a real input gap and TCP connection change,
+so it is a coordinate/safety regression fixture rather than a continuous
+episode or training sample. Integration tests verify its digest before reading
+and after target generation. Generated previews must always use a different
+path; the preview writer rejects source/output aliasing and existing outputs.
+
+The recorder/replayer and local TCP path have automated coverage, including the
+protected real fixture above. These commands do not start ROS, GELLO, Franka,
+MANUS, Sharpa or the server recorder.
 
 ## Stage 1 result (2026-10-17)
 
@@ -210,3 +224,102 @@ validated Quest poses
   -> dry-run target visualizer and safety supervisor
   -> explicitly enabled robot backend
 ```
+
+## Stage 2.3 offline coordinate and target preview
+
+`coordinates.py` now implements the explicit Unity-to-robot basis change:
+
+```text
+robot_x =  quest_z
+robot_y = -quest_x
+robot_z =  quest_y
+```
+
+Positions use this matrix directly. Orientations use `B R B^T`, preserving a
+proper rotation across the handedness change; quaternion components are never
+manually permuted. A configurable fixed controller-to-tool rigid transform is
+applied after the basis change. The existing `PoseCalibration` then maps motion
+relative to the captured controller anchor onto a caller-provided target anchor.
+
+Create a robot-disconnected preview from the protected real capture:
+
+```bash
+./scripts/preview_meta_quest_targets.sh \
+  recordings/quest_raw/stage2-sixdof-safety3.jsonl \
+  --output recordings/quest_targets/stage2-sixdof-safety3-right.jsonl \
+  --plot recordings/quest_targets/stage2-sixdof-safety3-right.png \
+  --side right \
+  --anchor first \
+  --target-position 0 0 0 \
+  --target-quaternion 0 0 0 1
+```
+
+`--anchor first` is for offline inspection only. Use `--anchor clutch` or
+`--anchor record` when evaluating deliberate operator anchoring. A held button
+at startup is not accepted until it has first been released and pressed again.
+If the selected controller's TCP connection id changes, the preview enters
+`HOLD` and never continues the old calibration silently.
+
+The JSONL output records the input digest, basis, scale, tool transform, target
+anchor, source sequence/connection id and every valid or held target. It is an
+offline end-effector preview only: the launcher imports no ROS modules and has
+no robot backend. Optional plotting is loaded lazily and requires matplotlib.
+
+The retained capture physically checks the up, right, and forward translations
+and includes two intended pitch motions. Their signs agree with the mapping
+above, and all three recorded re-anchors preserve the previous target exactly.
+The compact installed controller protocol still has no explicit tracking-origin
+or recenter event, so a recenter cannot be distinguished reliably from physical
+controller motion. This limitation does not block offline IK or fake hardware,
+but must remain an explicit robot-enable constraint.
+
+## Stage 2.4 offline clutch and safety state machine
+
+`state_machine.py` adds a robot-disconnected state machine with distinct
+`WAIT_INPUT`, `READY`, `FOLLOWING`, `MANUAL_HOLD`, and `FAULT_HOLD` states.
+The configured button is treated as a debounced toggle: a deliberate rising
+edge starts following, the next rising edge enters manual hold, and recovery
+from a fault requires an observed release followed by a new rising edge.
+Every entry to `FOLLOWING` captures a new source anchor against the last safe
+target, so engagement and recovery do not jump back to an older target.
+
+`safety.py` provides provisional offline checks for host receive timeout, TCP
+reconnection, explicit invalid tracking, source position/rotation jumps,
+target linear/angular speed, workspace radius, and target quaternion sign
+continuity. A violation enters `FAULT_HOLD` and retains the last safe target.
+These values are preview defaults derived in part from the stage-2 capture;
+they are not validated FR3 limits and must be reviewed with IK and the actual
+controller period before any robot backend exists.
+
+Replay the protected real capture through the state machine:
+
+```bash
+./scripts/validate_meta_quest_safety.sh \
+  recordings/quest_raw/stage2-sixdof-safety3.jsonl \
+  --output recordings/quest_targets/stage2-sixdof-safety3-right-safety.jsonl \
+  --plot recordings/quest_targets/stage2-sixdof-safety3-right-safety.png \
+  --side right \
+  --engage-button clutch \
+  --target-position 0 0 0 \
+  --target-quaternion 0 0 0 1
+```
+
+The output records all configured limits plus state and hold-reason counts.
+The script imports no ROS packages and has no topic publisher or robot backend.
+Tests inject stale timing, connection changes, invalid tracking, source jumps,
+speed violations and workspace violations by copying in-memory records; the
+operator-owned source JSONL is never edited.
+
+For formal data collection, any TCP connection change invalidates the current
+episode. The recorder must end or mark that candidate as interrupted, and a new
+episode must start from a fresh Home/anchor; data on opposite sides of a reconnect
+must never be concatenated. The state machine retains a tested recovery primitive
+for diagnostics, but production episode control must not use it to resume the
+same recording.
+
+The compact controller protocol still cannot prove that changing coordinates
+came from a Quest recenter rather than fast physical motion, and identical
+packets cannot distinguish a genuinely stationary controller from frozen
+device frames. The host-arrival watchdog and conservative jump detector cover
+the failures that are observable today. Explicit frame ids, device timestamps,
+tracking validity and recenter events remain protocol work before real control.
