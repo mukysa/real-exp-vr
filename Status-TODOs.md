@@ -121,8 +121,9 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
 
 ### P1：VR 输入与目标生成
 
-- [ ] 固定 APK、源码、协议与按钮映射。
-- [ ] 统一输入适配器，优先复用已有 TCP receiver。
+- [x] 固定 APK、源码与当前 controller 协议；物理按钮到最终接管/夹爪/录制语义仍待真机冻结。
+- [x] 统一输入适配器，复用 TCP receiver，并为每个有效包增加全局 sequence、TCP connection id 和主机接收时间。
+- [x] 实现非阻塞全速 JSONL 录制、完整性汇总和确定性回放；本地 200 包 TCP 测试无丢包，真实 Quest 录制待操作者到场。
 - [ ] 测试坐标手性、四元数顺序、六自由度运动方向和工具偏置。
 - [ ] 实现锚点标定、clutch-relative 跟随/保持状态机。
 - [ ] 加入位姿整形、冻结检测、超时保持、工作空间和速度约束。
