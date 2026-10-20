@@ -198,10 +198,8 @@ def run_bridge(args: argparse.Namespace) -> None:
         flush=True,
     )
 
-    scene = sapien.Scene()
     display = sapien.render.RenderVRDisplay()
     display.root_pose = sapien.Pose()
-    display.set_scene(scene)
 
     selected = (
         CONTROLLERS.items()
@@ -221,9 +219,12 @@ def run_bridge(args: argparse.Namespace) -> None:
         report_start = time.monotonic()
         try:
             while True:
-                scene.update_render()
-                display.update_render()
-                display.render()
+                # This adapter consumes tracking only; it has no simulation
+                # image to submit.  DexArena documents fetch_poses() as the
+                # direct, vsync-paced input refresh path.  Calling render()
+                # with the empty placeholder scene can make SteamVR reject the
+                # submission ("RuntimeError: failed to submit").
+                display.fetch_poses()
                 frame_id += 1
                 ids = tuple(int(value) for value in display.get_controller_ids())
                 if ids != last_ids:
