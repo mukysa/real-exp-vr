@@ -135,21 +135,7 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
 
 `stage2-sixdof-safety3.jsonl` 仅作为阶段 2 坐标与安全回放夹具，不是训练数据。它包含一次实际断流和连接变化，正好用于验证故障保持；正式 episode 必须只有一个 TCP connection id。P1 在当前紧凑协议可观测范围内收尾，recenter/冻结不可区分是已知限制，不用恢复式重连测试阻塞 P2 离线 IK。
 
-ALVR/OpenVR 的固定复现入口为：
-
-```bash
-cd /home/landau/real-exp-vr
-conda activate lerobot-vr
-unset PYTHONPATH PYTHONHOME
-./scripts/record_meta_quest_openvr.sh \
-  --output recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
-```
-
-该文件名用于本轮复现；文件存在后，下一轮必须换用新的 stage 名称，不能覆盖原数据。
-
-采集期间 Quest 必须保持佩戴、唤醒，ALVR Dashboard 必须为 `Streaming`。ALVR 离开 Streaming 时停止本条采集并整条重采，不使用冻结姿态续写。该输入链已提交为 `bd5153a feat(quest): add direct OpenVR recording pipeline`，Meta Quest 专项测试为 `67 passed`。
-
-完整逐命令复现见 [Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md)。2026-10-20 引导复现文件 `stage6-openvr-guided-20261020.jsonl` 已验证 928 pose、左右各 464、单一连接、lossless、`dropped=0`。一键脚本的后台 `Ctrl+C` 安全收尾已由提交 `9988dac` 修复并通过信号回归测试。
+ALVR/OpenVR 的唯一操作手册为 [Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md)，其他 Markdown 不再维护第二套启动步骤。采集期间 Quest 必须保持佩戴、唤醒，ALVR Dashboard 必须为 `Streaming`；离开 Streaming 时本条数据整条重采。2026-10-20 引导复现文件 `stage6-openvr-guided-20261020.jsonl` 已验证 928 pose、左右各 464、单一连接、lossless、`dropped=0`。输入链提交为 `bd5153a`，后台 `Ctrl+C` 安全收尾修复为 `9988dac`。
 
 ### P2：FR3 控制适配
 

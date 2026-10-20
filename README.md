@@ -37,7 +37,7 @@ This repo uses two different Python environments:
 
 Data collection and replay instructions live in [data_collection/DATA_COLLECTION_README.md](data_collection/DATA_COLLECTION_README.md).
 - [`scripts/start_teleoperation.sh`](scripts/start_teleoperation.sh): start left-, right-, or dual-arm GELLO/FR3 teleoperation with matching Franka grippers or Wuji hands.
-- [`scripts/start_meta_quest_pose_monitor.sh`](scripts/start_meta_quest_pose_monitor.sh): receive and display uncalibrated Quest wrist/controller poses without connecting to a robot. See [`data_collection/meta_quest/README.md`](data_collection/meta_quest/README.md).
+- [`scripts/record_meta_quest_openvr.sh`](scripts/record_meta_quest_openvr.sh): record Quest Touch controller input through the validated ALVR/OpenVR path without connecting to a robot. See [`Quest-ALVR-OpenVR-Reproduction.md`](Quest-ALVR-OpenVR-Reproduction.md).
 - `start_teleoperation.sh` accepts exactly one end-effector mode (`--arm`, `--gripper`, or `--hand`) and one arm selection (`--left`, `--right`, or `--duo`).
 
 All launchers can be invoked from a bare shell; manually activating Conda is
@@ -50,38 +50,31 @@ changing the calling shell. Set `LEROBOT_CONDA_ENV`, `WUJI_CONDA_ENV`, or
 - [`scripts/start_data_collection_server.sh`](scripts/start_data_collection_server.sh): start the data-server RealSense publishers, ROS bridge, and optional recorder.
 - [`scripts/replay.sh`](scripts/replay.sh): start the dual-arm FR3 replay controllers and Franka-hand managers, then replay a recorded LeRobot episode.
 
-### Meta Quest input status (client, 2026-10-17)
+### Meta Quest input status (client, 2026-10-20)
 
-Stage 1 hardware input validation is complete on the client. A Quest 3 and both
-Touch controllers were received through the controller-enabled Hand Tracking
-Streamer APK over USB/ADB TCP port 8000. Both controllers produced independent
-6-DoF poses at roughly 45--52 Hz, button/control fields changed as expected,
-and the host parser reported zero rejected pose records. This validation is
-pose-only: it does not start GELLO, command a Franka, or record a LeRobot
-episode.
+The supported live input path is Quest Touch controllers through ALVR/SteamVR
+and the direct OpenVR bridge into the existing lossless JSONL recorder. The
+older Hand Tracking Streamer/ADB launcher and the SAPIEN SteamVR bridge are
+historical diagnostics, not current operator entry points.
 
-Use the existing robot-disconnected launcher:
+Use the robot-disconnected launcher after ALVR reaches `Streaming`:
 
 ```bash
 cd /home/landau/real-exp-vr
 conda activate lerobot-vr
 unset PYTHONPATH PYTHONHOME
-./scripts/start_meta_quest_pose_monitor.sh
+./scripts/record_meta_quest_openvr.sh \
+  --output recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
 ```
 
-For a headless SSH session, add `--no-visualization`. In Hand Tracking Streamer
-select `TCP (Wired / ADB)`, `127.0.0.1`, port `8000`, and `Controllers Only`.
-The application settings panel is operated with Quest hand tracking in the
-current APK; controller UI rays are not configured. The panel intentionally
-disappears after **Start Streaming**.
-
-The monitor prints a 1 Hz summary of the latest in-memory poses. It does **not**
-save the full-rate input stream. The Stage 1 evidence log is
-`logs/quest-input-stage1-20261017.log`; it is a terminal summary log, not a
-training dataset. See [VR-import.md](VR-import.md) for the acceptance record,
-known design issues, and remaining safety work, and see
+Press `Ctrl+C` once and wait for `Saved ... poses`; the recorder writes a
+completion summary and atomically publishes the final JSONL. Use a new filename
+after stage 8 exists. The full startup, validation, and shutdown procedure is
+maintained only in
+[Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md).
+See [VR-import.md](VR-import.md) for current progress and
 [data_collection/meta_quest/README.md](data_collection/meta_quest/README.md) for
-the transport and protocol details.
+the protocol and safety boundary.
 
 ### Train
 
