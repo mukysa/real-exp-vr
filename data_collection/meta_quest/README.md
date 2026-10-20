@@ -26,6 +26,10 @@ It also avoids the SAPIEN display adapter on this client: that path returned
 cached controller poses unless a VR frame was submitted, while a background
 OpenVR application was verified to receive continuously changing poses.
 
+For the complete operator procedure, including every environment, ALVR,
+SteamVR, recording, shutdown, and validation command, see
+[`Quest-ALVR-OpenVR-Reproduction.md`](../../Quest-ALVR-OpenVR-Reproduction.md).
+
 Start the existing ALVR Dashboard and SteamVR, put on the Quest, open ALVR in
 the headset, and wait for the dashboard to show `Streaming`. Record with one
 command from the existing `lerobot-vr` environment:

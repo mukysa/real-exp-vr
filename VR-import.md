@@ -15,6 +15,8 @@ USB/ADB、TCP 8000、双侧 6-DoF 位姿和控制字段均已实测通过；本�
 
 当前推荐的手柄原始采集入口为 `scripts/record_meta_quest_openvr.sh`。成功实测文件 `recordings/quest_raw/stage2-openvr-controller-20261020.jsonl` 包含 4151 个 lossless pose，`rejected=0`、`dropped=0`，左右手柄位姿均连续变化，右手 trigger、clutch、record 均记录到状态切换。详细复现与结果见本文第 11 节。
 
+从启动软件到落盘校验的逐命令操作手册见 [Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md)。2026-10-20 已按该顺序再次人工复现，`stage6-openvr-guided-20261020.jsonl` 成功保存 928 个 pose，左右各 464 个、单一连接、`dropped=0`、`completed=true`。`Ctrl+C` 后台信号处理修复提交为 `9988dac`。
+
 ## 2. 三份文档的分工与进度
 
 | 文档 | 用途 | 当前进度 |
@@ -370,3 +372,20 @@ sha256sum recordings/quest_raw/<new-name>.jsonl
 - 分支：`feature/quest-stage2-target-preview`。
 - commit：`bd5153a feat(quest): add direct OpenVR recording pipeline`。
 - 原 GELLO pipeline、启动入口和 topic 未修改。下一步仍是 P2 FR3 离线 IK 与 fake hardware，不直接上真实机器人。
+
+### 11.4 完整引导复现与 Ctrl+C 修复
+
+完整逐命令操作不再在本文重复，统一维护在 [Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md)，其中包含环境检查、端口检查、ALVR Dashboard、SteamVR、Quest Streaming、新文件名检查、录制、正常结束、回放、左右手计数、SHA-256 和残留进程检查。
+
+本轮人工复现结果：
+
+```text
+文件：recordings/quest_raw/stage6-openvr-guided-20261020.jsonl
+大小：404,675 bytes
+pose：928（left=464，right=464）
+连接：accepted_connections=1
+完整性：schema=1, lossless，rejected=0，dropped=0，completed=true
+SHA-256：0c6ba8544968137151d45e580722eeec4fd138a40db2213ecf742a1046fd3ed7
+```
+
+一键脚本最初存在后台 recorder 继承忽略 `SIGINT`、导致 bridge 结束后终端仍持续打印的问题。当前 raw recorder 显式处理 `SIGINT/SIGTERM`，一键脚本等待子进程完成后退出，并增加后台信号回归测试。修复提交为 `9988dac fix(quest): finalize OpenVR capture on interrupt`；专项测试 `16 passed`。现在正常操作是在采集终端只按一次 `Ctrl+C`，等待 `Saved ... poses` 后再进行回放校验。

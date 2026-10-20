@@ -147,6 +147,8 @@ unset PYTHONPATH PYTHONHOME
 
 采集期间 Quest 必须保持佩戴、唤醒，ALVR Dashboard 必须为 `Streaming`。ALVR 离开 Streaming 时停止本条采集并整条重采，不使用冻结姿态续写。该输入链已提交为 `bd5153a feat(quest): add direct OpenVR recording pipeline`，Meta Quest 专项测试为 `67 passed`。
 
+完整逐命令复现见 [Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md)。2026-10-20 引导复现文件 `stage6-openvr-guided-20261020.jsonl` 已验证 928 pose、左右各 464、单一连接、lossless、`dropped=0`。一键脚本的后台 `Ctrl+C` 安全收尾已由提交 `9988dac` 修复并通过信号回归测试。
+
 ### P2：FR3 控制适配
 
 - [ ] 实现或适配在线 FR3 IK，测量延迟、连续性和奇异点行为。
