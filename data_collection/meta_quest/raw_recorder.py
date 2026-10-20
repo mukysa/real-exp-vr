@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 from queue import Empty
 import socket
+import signal
 import subprocess
 import time
+from threading import Event, current_thread, main_thread
 from typing import Any
 
 from .power import QuestKeepAwake
@@ -72,8 +75,8 @@ class PoseRecordingWriter:
             raise RuntimeError("recording writer is not active")
         self._write(pose_record(pose))
         self.pose_records += 1
-        if self.pose_records % 100 == 0:
-            self._file.flush()
+        # Keep the partial capture readable even if the process is terminated.
+        self._file.flush()
 
     def complete(self, summary: dict[str, Any]) -> Path:
         if self._file is None or self._completed:
@@ -152,6 +155,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+@contextmanager
+def _shutdown_signals():
+    stop = Event()
+    if current_thread() is not main_thread():
+        # Embedded callers own their process's signal policy.
+        yield stop
+        return
+
+    def request_stop(signum, frame):
+        stop.set()
+
+    # Bash background jobs can inherit SIGINT=SIG_IGN. Explicitly replace it.
+    previous = {sig: signal.signal(sig, request_stop)
+                for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        yield stop
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     receiver = PoseReceiver(args.host, args.port)
@@ -168,13 +192,15 @@ def main(argv: list[str] | None = None) -> None:
         "port": args.port,
     }
 
-    with PoseRecordingWriter(args.output, metadata) as writer:
+    with _shutdown_signals() as stop, PoseRecordingWriter(args.output, metadata) as writer:
         receiver.start()
         print(f"Recording every accepted Quest pose on {args.host}:{receiver.port}")
         print(f"Partial output: {writer.partial_path}")
         next_print = time.monotonic()
         try:
-            while args.duration_s is None or time.monotonic() - started_monotonic < args.duration_s:
+            while not stop.is_set() and (
+                args.duration_s is None or time.monotonic() - started_monotonic < args.duration_s
+            ):
                 try:
                     writer.write_pose(subscription.get(timeout=0.1))
                 except Empty:

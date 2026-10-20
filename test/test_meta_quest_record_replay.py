@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
 
@@ -15,6 +18,57 @@ from data_collection.meta_quest.replay import (
     load_recording,
     replay_poses,
 )
+
+
+@pytest.mark.parametrize("stop_signal", [signal.SIGINT, signal.SIGTERM])
+def test_background_recorder_signals_finalize_all_poses(tmp_path, stop_signal):
+    path = tmp_path / "signals.jsonl"
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    # Reproduce the ignored SIGINT inherited from a Bash background job.
+    command = (
+        "import signal,runpy; signal.signal(signal.SIGINT,signal.SIG_IGN); "
+        "runpy.run_module('data_collection.meta_quest.raw_recorder',run_name='__main__')"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", command, "--output", str(path),
+         "--port", str(port), "--no-keep-awake"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                connection = socket.create_connection(("127.0.0.1", port), timeout=0.2)
+                break
+            except OSError:
+                assert process.poll() is None
+                assert time.monotonic() < deadline
+                time.sleep(0.02)
+        with connection:
+            connection.sendall(
+                b"Right controller:, 0.1, 0.2, 0.3, 0, 0, 0, 1, 0.0, 0, 0\n" * 4
+            )
+        partial = path.with_name(path.name + ".partial")
+        while len(partial.read_text().splitlines()) < 5:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        process.send_signal(stop_signal)
+        # A second interrupt during receiver shutdown must not abort saving.
+        time.sleep(0.02)
+        if process.poll() is None:
+            process.send_signal(signal.SIGINT)
+        output, _ = process.communicate(timeout=10)
+        assert process.returncode == 0, output
+        recording = load_recording(path)
+        assert len(recording.poses) == 4
+        assert recording.lossless
+        assert not partial.exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate()
 
 
 def _received(sequence: int, side: str, received_at: float, connection_id: int = 1):

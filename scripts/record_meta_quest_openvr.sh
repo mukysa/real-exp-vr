@@ -9,7 +9,8 @@ bridge_pid=""
 recorder_python="${META_QUEST_PYTHON:-$(command -v python || true)}"
 
 stop_children() {
-  trap - INT TERM EXIT
+  trap '' INT TERM
+  trap - EXIT
   if [[ -n "${recorder_pid}" ]] && kill -0 "${recorder_pid}" 2>/dev/null; then
     kill -INT "${recorder_pid}" 2>/dev/null || true
   fi
@@ -78,10 +79,6 @@ if kill -0 "${bridge_pid}" 2>/dev/null; then
   kill -TERM "${bridge_pid}" 2>/dev/null || true
 fi
 
-wait "${recorder_pid}" 2>/dev/null || true
-wait "${bridge_pid}" 2>/dev/null || true
-recorder_pid=""
-bridge_pid=""
-trap - EXIT
+stop_children
 
 exit "${first_status}"
