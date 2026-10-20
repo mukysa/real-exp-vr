@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,10 +10,34 @@ from data_collection.meta_quest.calibration import RigidPose
 from data_collection.meta_quest.coordinates import unity_to_robot_pose
 from data_collection.meta_quest.protocol import parse_pose_line
 from data_collection.meta_quest.steamvr_bridge import (
+    _configure_sapien_vr,
     alvr_is_streaming,
     compact_controller_line,
     sapien_pose_to_unity,
 )
+
+
+@pytest.mark.parametrize("has_explicit_initializer", [False, True])
+def test_configure_sapien_vr_supports_both_initialization_apis(
+    has_explicit_initializer,
+) -> None:
+    calls = []
+    render = SimpleNamespace(
+        set_viewer_shader_dir=lambda path: calls.append(("shader", path))
+    )
+    if has_explicit_initializer:
+        render.enable_vr = lambda: calls.append(("enable", None))
+    fake_sapien = SimpleNamespace(__file__="/opt/sapien/__init__.py", render=render)
+
+    assert _configure_sapien_vr(fake_sapien) is has_explicit_initializer
+    assert calls[0] == (
+        "shader",
+        "/opt/sapien/vulkan_shader/vr_default",
+    )
+    if has_explicit_initializer:
+        assert ("enable", None) in calls
+    else:
+        assert len(calls) == 1
 
 
 @pytest.mark.parametrize(

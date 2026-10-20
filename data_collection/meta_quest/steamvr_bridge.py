@@ -127,6 +127,28 @@ def _load_sapien() -> Any:
     return sapien
 
 
+def _configure_sapien_vr(sapien: Any) -> bool:
+    """Configure VR shaders and support both SAPIEN VR initialization APIs.
+
+    Older SAPIEN builds expose ``enable_vr()`` explicitly.  The 3.0.0b1 build
+    installed on the lab client initializes OpenVR when ``RenderVRDisplay`` is
+    constructed and therefore has no such function.
+
+    Returns whether the explicit initializer was available and invoked.
+    """
+    shader_dir = os.path.join(
+        os.path.dirname(sapien.__file__),
+        "vulkan_shader",
+        "vr_default",
+    )
+    sapien.render.set_viewer_shader_dir(shader_dir)
+    enable_vr = getattr(sapien.render, "enable_vr", None)
+    if callable(enable_vr):
+        enable_vr()
+        return True
+    return False
+
+
 def _wait_for_alvr(session_path: Path) -> None:
     last_report = 0.0
     while not alvr_is_streaming(session_path):
@@ -165,13 +187,16 @@ def run_bridge(args: argparse.Namespace) -> None:
 
     # Keep OpenVR legacy controller input active. Registering an action
     # manifest suppresses the button-mask API used by SAPIEN/DexArena.
-    shader_dir = os.path.join(
-        os.path.dirname(sapien.__file__),
-        "vulkan_shader",
-        "vr_default",
+    explicit_vr_init = _configure_sapien_vr(sapien)
+    initialization_mode = (
+        "explicit enable_vr()"
+        if explicit_vr_init
+        else "RenderVRDisplay constructor"
     )
-    sapien.render.set_viewer_shader_dir(shader_dir)
-    sapien.render.enable_vr()
+    print(
+        f"SAPIEN VR initialization: {initialization_mode}",
+        flush=True,
+    )
 
     scene = sapien.Scene()
     display = sapien.render.RenderVRDisplay()
