@@ -142,8 +142,10 @@ cd /home/landau/real-exp-vr
 conda activate lerobot-vr
 unset PYTHONPATH PYTHONHOME
 ./scripts/record_meta_quest_openvr.sh \
-  --output recordings/quest_raw/<new-name>.jsonl
+  --output recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
 ```
+
+该文件名用于本轮复现；文件存在后，下一轮必须换用新的 stage 名称，不能覆盖原数据。
 
 采集期间 Quest 必须保持佩戴、唤醒，ALVR Dashboard 必须为 `Streaming`。ALVR 离开 Streaming 时停止本条采集并整条重采，不使用冻结姿态续写。该输入链已提交为 `bd5153a feat(quest): add direct OpenVR recording pipeline`，Meta Quest 专项测试为 `67 passed`。
 

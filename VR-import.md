@@ -323,8 +323,10 @@ conda activate lerobot-vr
 unset PYTHONPATH PYTHONHOME
 
 ./scripts/record_meta_quest_openvr.sh \
-  --output recordings/quest_raw/<new-name>.jsonl
+  --output recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
 ```
+
+上面是本轮固定命令。该文件存在后，下一次必须使用新的 `stage9...` 等名称；录制器不会覆盖已有 JSONL。
 
 看到 pose 计数持续增长后执行动作，结束时按一次 `Ctrl+C`。一键脚本会先让 raw recorder 写 completion summary、将 `.partial` 原子改名，再停止 OpenVR bridge；已有输出不会覆盖。ALVR 离开 `Streaming` 时 bridge 会停止，避免继续写缓存姿态。该路线使用 Wi-Fi/SteamVR，不需要 `adb reverse`。
 

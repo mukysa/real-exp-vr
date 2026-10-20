@@ -39,8 +39,11 @@ cd /home/landau/real-exp-vr
 conda activate lerobot-vr
 unset PYTHONPATH PYTHONHOME
 ./scripts/record_meta_quest_openvr.sh \
-  --output recordings/quest_raw/<name>.jsonl
+  --output recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
 ```
+
+That exact name is reserved for the guided stage-8 run. Use a new stage name
+after it exists; the recorder intentionally refuses to overwrite a capture.
 
 The wrapper starts the existing lossless raw recorder and the direct OpenVR
 bridge, waits for the local receiver, and safely finalizes the `.partial` file

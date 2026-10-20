@@ -118,26 +118,31 @@ IP 可能随网络变化；应以 ALVR Dashboard 当前显示为准。
 
 ## 6. 为本次采集选择新文件名
 
-回到第 1 步中已激活 `lerobot-vr` 的采集终端。下面示例中的 `my-test` 应改成能说明动作内容的新名字：
+回到第 1 步中已激活 `lerobot-vr` 的采集终端。本轮使用固定文件名 `stage8-openvr-guided-20261020.jsonl`：
 
 ```bash
 cd /home/landau/real-exp-vr
-CAPTURE="recordings/quest_raw/my-test-20261020.jsonl"
+CAPTURE="recordings/quest_raw/stage8-openvr-guided-20261020.jsonl"
 
 test ! -e "$CAPTURE" \
   && test ! -e "$CAPTURE.partial" \
   && echo "Output path is free: $CAPTURE"
 ```
 
-只有出现 `Output path is free` 才进入下一步。如果没有输出，换一个文件名；不要覆盖或删除已有成功数据。
+只有出现 `Output path is free` 才进入下一步。如果没有输出，说明 `stage8` 已经存在；下一轮改用新的 `stage9...` 等文件名，不要覆盖或删除已有成功数据。
 
 ## 7. 启动正式录制
 
 再次确认 Quest 仍佩戴、ALVR 在前台且 Dashboard 为 `Streaming`，然后执行：
 
+本轮正式执行命令为：
+
 ```bash
-./scripts/record_meta_quest_openvr.sh --output "$CAPTURE"
+./scripts/record_meta_quest_openvr.sh \
+  --output recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
 ```
+
+这里也可以执行等价的变量形式 `./scripts/record_meta_quest_openvr.sh --output "$CAPTURE"`；本文后续校验命令继续使用 `$CAPTURE`，避免重复输入路径。
 
 正常启动过程应包含：
 
