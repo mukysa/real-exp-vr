@@ -1,0 +1,279 @@
+"""Relay live ALVR/SteamVR controller input into the stage-2 TCP contract.
+
+Unlike :mod:`steamvr_bridge`, this adapter reads OpenVR directly and does not
+create a SAPIEN render display.  That distinction matters on the lab client:
+the installed SAPIEN 3.0.0b1 build caches controller input unless it submits
+VR frames, while a background OpenVR application receives continuously fresh
+poses without rendering anything into the headset.
+
+This module only produces controller input records.  It has no ROS imports,
+publisher, robot backend, or robot output.
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+from pathlib import Path
+import socket
+import time
+from typing import Any, Sequence
+
+from .calibration import RigidPose
+from .coordinates import change_rotation_basis, transform_vector
+from .steamvr_bridge import (
+    BUTTON_A,
+    BUTTON_B,
+    BUTTON_TRIGGER,
+    alvr_is_streaming,
+    compact_controller_line,
+)
+
+
+# OpenVR tracking space is right-handed: x right, y up, -z forward.  The
+# existing raw-input contract is Unity-like: x right, y up, +z forward.
+OPENVR_TO_UNITY_BASIS = (
+    (1.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0),
+    (0.0, 0.0, -1.0),
+)
+
+
+def _rotation_matrix_to_quaternion(
+    matrix: Sequence[Sequence[float]],
+) -> tuple[float, float, float, float]:
+    """Convert a slightly noisy 3x3 OpenVR matrix to normalized xyzw.
+
+    OpenVR matrices measured on the rig differ from exact orthonormality by
+    normal floating-point error.  The project's strict basis validator is
+    intended for declared coordinate bases, so controller samples use this
+    numerically tolerant conversion and let :class:`RigidPose` normalize the
+    result.
+    """
+
+    rows = tuple(tuple(float(value) for value in row) for row in matrix)
+    if len(rows) != 3 or any(len(row) != 3 for row in rows):
+        raise ValueError("OpenVR rotation must be a 3x3 matrix")
+    if not all(math.isfinite(value) for row in rows for value in row):
+        raise ValueError("OpenVR rotation must contain finite values")
+
+    trace = rows[0][0] + rows[1][1] + rows[2][2]
+    if trace > 0.0:
+        scale = math.sqrt(max(0.0, trace + 1.0)) * 2.0
+        if scale < 1e-12:
+            raise ValueError("OpenVR rotation matrix is degenerate")
+        result = (
+            (rows[2][1] - rows[1][2]) / scale,
+            (rows[0][2] - rows[2][0]) / scale,
+            (rows[1][0] - rows[0][1]) / scale,
+            0.25 * scale,
+        )
+    elif rows[0][0] > rows[1][1] and rows[0][0] > rows[2][2]:
+        scale = math.sqrt(max(0.0, 1.0 + rows[0][0] - rows[1][1] - rows[2][2])) * 2.0
+        if scale < 1e-12:
+            raise ValueError("OpenVR rotation matrix is degenerate")
+        result = (
+            0.25 * scale,
+            (rows[0][1] + rows[1][0]) / scale,
+            (rows[0][2] + rows[2][0]) / scale,
+            (rows[2][1] - rows[1][2]) / scale,
+        )
+    elif rows[1][1] > rows[2][2]:
+        scale = math.sqrt(max(0.0, 1.0 + rows[1][1] - rows[0][0] - rows[2][2])) * 2.0
+        if scale < 1e-12:
+            raise ValueError("OpenVR rotation matrix is degenerate")
+        result = (
+            (rows[0][1] + rows[1][0]) / scale,
+            0.25 * scale,
+            (rows[1][2] + rows[2][1]) / scale,
+            (rows[0][2] - rows[2][0]) / scale,
+        )
+    else:
+        scale = math.sqrt(max(0.0, 1.0 + rows[2][2] - rows[0][0] - rows[1][1])) * 2.0
+        if scale < 1e-12:
+            raise ValueError("OpenVR rotation matrix is degenerate")
+        result = (
+            (rows[0][2] + rows[2][0]) / scale,
+            (rows[1][2] + rows[2][1]) / scale,
+            0.25 * scale,
+            (rows[1][0] - rows[0][1]) / scale,
+        )
+    return RigidPose((0.0, 0.0, 0.0), result).quaternion_xyzw
+
+
+def openvr_matrix_to_unity_pose(matrix: Sequence[Sequence[float]]) -> RigidPose:
+    """Convert an OpenVR 3x4 tracking matrix to the raw Unity-like contract."""
+
+    rows = tuple(tuple(float(value) for value in row) for row in matrix)
+    if len(rows) != 3 or any(len(row) != 4 for row in rows):
+        raise ValueError("OpenVR pose must be a 3x4 matrix")
+    if not all(math.isfinite(value) for row in rows for value in row):
+        raise ValueError("OpenVR pose must contain finite values")
+    position = transform_vector(
+        (rows[0][3], rows[1][3], rows[2][3]),
+        OPENVR_TO_UNITY_BASIS,
+    )
+    quaternion = _rotation_matrix_to_quaternion(tuple(row[:3] for row in rows))
+    return RigidPose(
+        position,
+        change_rotation_basis(quaternion, OPENVR_TO_UNITY_BASIS),
+    )
+
+
+def _load_openvr() -> Any:
+    try:
+        import openvr
+    except ImportError as exc:
+        raise RuntimeError(
+            "Python OpenVR bindings are unavailable. Run this module through "
+            "scripts/start_meta_quest_openvr_bridge.sh and install openvr into "
+            "OPENVR_SITE_PACKAGES."
+        ) from exc
+    return openvr
+
+
+def _controller_controls(system: Any, controller_id: int) -> tuple[float, bool, bool]:
+    ok, state = system.getControllerState(controller_id)
+    if not ok:
+        return 0.0, False, False
+    mask = int(state.ulButtonPressed)
+    try:
+        trigger = float(state.rAxis[1].x)
+    except (AttributeError, IndexError, TypeError):
+        trigger = 1.0 if mask & BUTTON_TRIGGER else 0.0
+    trigger = min(1.0, max(0.0, trigger))
+    return trigger, bool(mask & BUTTON_B), bool(mask & BUTTON_A)
+
+
+def _wait_for_alvr(session_path: Path) -> None:
+    last_report = 0.0
+    while not alvr_is_streaming(session_path):
+        now = time.monotonic()
+        if now - last_report >= 5.0:
+            print(
+                "Waiting for ALVR Streaming: wear/wake the Quest and keep the "
+                "ALVR client in the foreground.",
+                flush=True,
+            )
+            last_report = now
+        time.sleep(0.5)
+
+
+def run_bridge(args: argparse.Namespace) -> None:
+    openvr = _load_openvr()
+    if args.dry_run:
+        print("OpenVR bridge dry-run OK; robot_output_enabled=false")
+        return
+
+    session_path = Path(args.alvr_session).expanduser()
+    if not args.no_alvr_wait:
+        _wait_for_alvr(session_path)
+
+    openvr.init(openvr.VRApplication_Background)
+    system = openvr.VRSystem()
+    roles = {
+        "left": openvr.TrackedControllerRole_LeftHand,
+        "right": openvr.TrackedControllerRole_RightHand,
+    }
+    selected = roles.items() if args.side == "both" else ((args.side, roles[args.side]),)
+    print(
+        f"Connecting direct OpenVR input to PoseReceiver at {args.host}:{args.port}; "
+        "robot_output_enabled=false",
+        flush=True,
+    )
+
+    try:
+        with socket.create_connection((args.host, args.port), timeout=3.0) as output:
+            output.settimeout(None)
+            frame_id = 0
+            sent = 0
+            report_start = time.monotonic()
+            next_poll = report_start
+            last_ids: dict[str, int] = {}
+            while True:
+                if not args.no_alvr_wait and not alvr_is_streaming(session_path):
+                    print(
+                        "ALVR left Streaming state; stopping instead of emitting cached poses.",
+                        flush=True,
+                    )
+                    return
+                poses = system.getDeviceToAbsoluteTrackingPose(
+                    openvr.TrackingUniverseStanding,
+                    0.0,
+                    openvr.k_unMaxTrackedDeviceCount,
+                )
+                frame_id += 1
+                timestamp_ns = time.monotonic_ns()
+                current_ids: dict[str, int] = {}
+                for side, role in selected:
+                    controller_id = int(system.getTrackedDeviceIndexForControllerRole(role))
+                    if controller_id == openvr.k_unTrackedDeviceIndexInvalid:
+                        continue
+                    current_ids[side] = controller_id
+                    tracked = poses[controller_id]
+                    if not tracked.bDeviceIsConnected or not tracked.bPoseIsValid:
+                        continue
+                    pose = openvr_matrix_to_unity_pose(tracked.mDeviceToAbsoluteTracking.m)
+                    grasp, clutch, record = _controller_controls(system, controller_id)
+                    line = compact_controller_line(
+                        side=side,
+                        pose=pose,
+                        grasp=grasp,
+                        clutch=clutch,
+                        record=record,
+                        frame_id=frame_id,
+                        timestamp_ns=timestamp_ns,
+                    )
+                    output.sendall(line.encode("utf-8") + b"\n")
+                    sent += 1
+                if current_ids != last_ids:
+                    print(f"OpenVR controller ids: {last_ids} -> {current_ids}", flush=True)
+                    last_ids = current_ids
+                now = time.monotonic()
+                if now - report_start >= args.report_interval_s:
+                    elapsed = now - report_start
+                    print(
+                        f"OpenVR frames={frame_id} sent={sent} "
+                        f"rate={sent / elapsed:.1f} pose/s ids={current_ids}",
+                        flush=True,
+                    )
+                    sent = 0
+                    report_start = now
+                next_poll += 1.0 / args.poll_hz
+                time.sleep(max(0.0, next_poll - time.monotonic()))
+    except (BrokenPipeError, ConnectionResetError):
+        print("PoseReceiver closed the connection; stopping OpenVR bridge.", flush=True)
+    except KeyboardInterrupt:
+        print("Stopping OpenVR pose bridge cleanly.", flush=True)
+    finally:
+        openvr.shutdown()
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Relay live ALVR controllers through OpenVR without robot output."
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--side", choices=("both", "left", "right"), default="both")
+    parser.add_argument("--poll-hz", type=float, default=30.0)
+    parser.add_argument("--report-interval-s", type=float, default=5.0)
+    parser.add_argument("--alvr-session", default="~/.config/alvr/session.json")
+    parser.add_argument("--no-alvr-wait", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
+    if not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    if args.poll_hz <= 0.0:
+        parser.error("--poll-hz must be positive")
+    if args.report_interval_s <= 0.0:
+        parser.error("--report-interval-s must be positive")
+    return args
+
+
+def main(argv: list[str] | None = None) -> None:
+    run_bridge(parse_args(argv))
+
+
+if __name__ == "__main__":
+    main()

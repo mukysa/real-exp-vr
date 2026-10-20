@@ -10,45 +10,62 @@ import Franka libraries, publish robot targets, or convert Unity coordinates
 into a robot frame.
 
 Two interchangeable controller transports are supported. The original APK
-route remains available. The ALVR route reuses DexArena's tested
-SAPIEN/SteamVR controller API and converts its poses back into the same raw
-Unity-frame contract before any stage-2 calibration or safety processing:
+route remains available. The ALVR route reads the SteamVR controllers through
+OpenVR and converts their poses back into the same raw Unity-frame contract
+before any stage-2 calibration or safety processing:
 
 ```text
-Quest ALVR client -> ALVR server + SteamVR -> SAPIEN RenderVRDisplay
-  -> steamvr_bridge -> local TCP :8000 -> PoseReceiver
+Quest controllers -> ALVR client --Wi-Fi/TCP--> ALVR server + SteamVR
+  -> openvr_bridge -> local TCP :8000 -> PoseReceiver/raw_recorder -> JSONL
 ```
 
 The bridge is input-only: it does not import ROS/Franka code or enable robot
 output. It deliberately avoids registering a SteamVR action manifest because
 that disables the legacy button-mask API used for B/clutch and A/record.
+It also avoids the SAPIEN display adapter on this client: that path returned
+cached controller poses unless a VR frame was submitted, while a background
+OpenVR application was verified to receive continuously changing poses.
 
-Start the existing ALVR Dashboard and SteamVR, open ALVR on Quest, and wait for
-the dashboard to show `Streaming`. Then use two terminals:
+Start the existing ALVR Dashboard and SteamVR, put on the Quest, open ALVR in
+the headset, and wait for the dashboard to show `Streaming`. Record with one
+command from the existing `lerobot-vr` environment:
 
 ```bash
-# Terminal 1: the existing lerobot-vr environment
 cd /home/landau/real-exp-vr
 conda activate lerobot-vr
 unset PYTHONPATH PYTHONHOME
-./scripts/start_meta_quest_alvr_monitor.sh --no-visualization
-
-# Terminal 2: reuses the lab's existing Python 3.11 + SAPIEN installation
-cd /home/landau/real-exp-vr
-./scripts/start_meta_quest_steamvr_bridge.sh
+./scripts/record_meta_quest_openvr.sh \
+  --output recordings/quest_raw/<name>.jsonl
 ```
 
-Before touching SteamVR, validate the reused dependency path with:
+The wrapper starts the existing lossless raw recorder and the direct OpenVR
+bridge, waits for the local receiver, and safely finalizes the `.partial` file
+when `Ctrl+C` is pressed. Existing outputs are never overwritten. The Quest
+must remain worn/awake with ALVR in the foreground; if ALVR leaves `Streaming`,
+the bridge stops rather than writing cached poses. This Wi-Fi transport does
+not use `adb reverse`.
+
+For diagnosis, the two components can still be run in separate terminals:
 
 ```bash
-./scripts/start_meta_quest_steamvr_bridge.sh --dry-run
+# Terminal 1 (lerobot-vr)
+python -m data_collection.meta_quest.raw_recorder \
+  --output recordings/quest_raw/<name>.jsonl
+
+# Terminal 2 (standalone OpenVR Python configured by this launcher)
+./scripts/start_meta_quest_openvr_bridge.sh
 ```
 
-Successful live validation prints controller ids and increasing pose counts in
-the bridge terminal. The monitor must show `source=controller`, layout
+Validate the reused OpenVR dependency path without opening a connection with:
+
+```bash
+./scripts/start_meta_quest_openvr_bridge.sh --dry-run
+```
+
+Successful live validation prints controller ids and increasing pose counts.
+Replay/inspection must show `source=controller`, layout
 `controller_compact_controls_v1`, changing position/quaternion values, and
-B/A/trigger changes. No ADB reverse is used for this route. Stop both processes
-with `Ctrl+C`; do not hard-kill SteamVR.
+B/A/trigger changes. Stop with `Ctrl+C`; do not hard-kill SteamVR.
 
 ## Current boundary
 
