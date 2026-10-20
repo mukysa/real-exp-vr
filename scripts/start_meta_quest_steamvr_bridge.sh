@@ -21,6 +21,23 @@ if [[ ! -d "${sapien_site_packages}/sapien" ]]; then
   exit 1
 fi
 
+# SAPIEN's OpenVR backend needs the active desktop session. Interactive
+# terminals already inherit these variables; SSH/nohup launches do not.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" ]]; then
+  shopt -s nullglob
+  xauthority_candidates=("${XDG_RUNTIME_DIR}"/.mutter-Xwaylandauth.*)
+  shopt -u nullglob
+  if (( ${#xauthority_candidates[@]} == 1 )); then
+    export XAUTHORITY="${xauthority_candidates[0]}"
+  else
+    echo "Error: could not identify the desktop XAUTHORITY file." >&2
+    echo "Set XAUTHORITY explicitly before starting the SteamVR bridge." >&2
+    exit 1
+  fi
+fi
+
 unset PYTHONHOME
 export PYTHONPATH="${repository_root}:${sapien_site_packages}"
 
