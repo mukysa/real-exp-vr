@@ -21,7 +21,7 @@ Quest 3 左右 Touch 手柄
 
 - 下列电脑命令都在 client `/home/landau/real-exp-vr` 中执行。
 - ALVR Dashboard 与 SteamVR 是图形程序；从 client 本地图形桌面的终端启动最稳定。通过 VS Code SSH 操作时，如果窗口没有显示，就到 client 桌面启动。
-- 正式录制必须使用一个从未存在过的新 `.jsonl` 文件名。录制器拒绝覆盖已有文件。
+- 每次录制在启动命令里使用新的 `.jsonl` 文件名；录制器不会覆盖已有文件。
 - 采集期间持续佩戴并唤醒 Quest，保持 Quest 内 ALVR 位于前台，电脑端 Dashboard 必须显示 `Streaming`。
 - 正常结束只在采集终端按一次 `Ctrl+C`，然后等待出现 `Saved ... poses` 和命令提示符。
 
@@ -116,22 +116,7 @@ ping -c 2 192.168.52.70
 
 IP 可能随网络变化；应以 ALVR Dashboard 当前显示为准。
 
-## 6. 为本次采集选择新文件名
-
-回到第 1 步中已激活 `lerobot-vr` 的采集终端。本轮使用固定文件名 `stage8-openvr-guided-20261020.jsonl`：
-
-```bash
-cd /home/landau/real-exp-vr
-CAPTURE="recordings/quest_raw/stage8-openvr-guided-20261020.jsonl"
-
-test ! -e "$CAPTURE" \
-  && test ! -e "$CAPTURE.partial" \
-  && echo "Output path is free: $CAPTURE"
-```
-
-只有出现 `Output path is free` 才进入下一步。如果没有输出，说明 `stage8` 已经存在；下一轮改用新的 `stage9...` 等文件名，不要覆盖或删除已有成功数据。
-
-## 7. 启动正式录制
+## 6. 启动正式录制
 
 再次确认 Quest 仍佩戴、ALVR 在前台且 Dashboard 为 `Streaming`，然后执行：
 
@@ -142,7 +127,7 @@ test ! -e "$CAPTURE" \
   --output recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
 ```
 
-这里也可以执行等价的变量形式 `./scripts/record_meta_quest_openvr.sh --output "$CAPTURE"`；本文后续校验命令继续使用 `$CAPTURE`，避免重复输入路径。
+如果该文件已经存在，下一轮只需把命令中的 `stage8` 改成 `stage9` 等新名称。
 
 正常启动过程应包含：
 
@@ -156,7 +141,7 @@ poses=... written=... rejected=0 dropped=0
 
 只有 `poses` 和 `written` 持续增加，才表示数据真的在写入。然后完成计划动作，例如左右手柄平移、转动、trigger、A/X、B/Y。不要通过 ALVR Dashboard 的图像流是否流畅来代替 pose 计数检查。
 
-## 8. 正常结束并等待安全落盘
+## 7. 正常结束并等待安全落盘
 
 在正在输出 `poses=...` 的采集终端按一次：
 
@@ -178,20 +163,25 @@ Saved <数量> poses to recordings/quest_raw/<文件名>.jsonl; dropped=0
 
 如果 ALVR 在采集中离开 `Streaming`，OpenVR bridge 会停止而不是继续写缓存姿态，录制器随后安全收尾。但正式 episode 应判为中断并整条重采，不拼接断线前后的数据。
 
-## 9. 校验新 JSONL
+## 8. 校验新 JSONL
 
 仍在同一个终端执行：
 
 ```bash
-python -m data_collection.meta_quest.replay "$CAPTURE" --summary-only
+python -m data_collection.meta_quest.replay \
+  recordings/quest_raw/stage8-openvr-guided-20261020.jsonl \
+  --summary-only
 
-grep -c '"side":"right"' "$CAPTURE"
-grep -c '"side":"left"' "$CAPTURE"
+grep -c '"side":"right"' \
+  recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
+grep -c '"side":"left"' \
+  recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
 
-sha256sum "$CAPTURE"
-tail -1 "$CAPTURE"
+sha256sum recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
+tail -1 recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
 
-test ! -e "$CAPTURE.partial" && echo "No partial file remains"
+test ! -e recordings/quest_raw/stage8-openvr-guided-20261020.jsonl.partial \
+  && echo "No partial file remains"
 ```
 
 合格文件应满足：
@@ -210,11 +200,11 @@ pgrep -af 'raw_recorder|openvr_bridge|steamvr_bridge|record_meta_quest_openvr' \
   || echo "All Quest recording processes stopped"
 ```
 
-## 10. 结束设备软件
+## 9. 结束设备软件
 
 确认 JSONL 合格后，可从图形界面依次退出 SteamVR 和 ALVR Dashboard，再退出 Quest 内的 ALVR。不要在 JSONL 仍为 `.partial` 时先关闭整个 client。
 
-## 11. 2026-10-20 完整人工复现实测
+## 10. 2026-10-20 完整人工复现实测
 
 本流程已由操作者从环境检查开始完整走通，最终文件为：
 
