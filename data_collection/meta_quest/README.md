@@ -9,6 +9,47 @@ The current code only receives, validates, and displays poses. It does not
 import Franka libraries, publish robot targets, or convert Unity coordinates
 into a robot frame.
 
+Two interchangeable controller transports are supported. The original APK
+route remains available. The ALVR route reuses DexArena's tested
+SAPIEN/SteamVR controller API and converts its poses back into the same raw
+Unity-frame contract before any stage-2 calibration or safety processing:
+
+```text
+Quest ALVR client -> ALVR server + SteamVR -> SAPIEN RenderVRDisplay
+  -> steamvr_bridge -> local TCP :8000 -> PoseReceiver
+```
+
+The bridge is input-only: it does not import ROS/Franka code or enable robot
+output. It deliberately avoids registering a SteamVR action manifest because
+that disables the legacy button-mask API used for B/clutch and A/record.
+
+Start the existing ALVR Dashboard and SteamVR, open ALVR on Quest, and wait for
+the dashboard to show `Streaming`. Then use two terminals:
+
+```bash
+# Terminal 1: the existing lerobot-vr environment
+cd /home/landau/real-exp-vr
+conda activate lerobot-vr
+unset PYTHONPATH PYTHONHOME
+./scripts/start_meta_quest_alvr_monitor.sh --no-visualization
+
+# Terminal 2: reuses the lab's existing Python 3.11 + SAPIEN installation
+cd /home/landau/real-exp-vr
+./scripts/start_meta_quest_steamvr_bridge.sh
+```
+
+Before touching SteamVR, validate the reused dependency path with:
+
+```bash
+./scripts/start_meta_quest_steamvr_bridge.sh --dry-run
+```
+
+Successful live validation prints controller ids and increasing pose counts in
+the bridge terminal. The monitor must show `source=controller`, layout
+`controller_compact_controls_v1`, changing position/quaternion values, and
+B/A/trigger changes. No ADB reverse is used for this route. Stop both processes
+with `Ctrl+C`; do not hard-kill SteamVR.
+
 ## Current boundary
 
 ```text
