@@ -1,17 +1,19 @@
 # Quest 硬件接入交接与待办
 
-更新日期：2026-10-17。
+更新日期：2026-10-20。
 
 ## 1. 接手后先做什么
 
 Quest 头显和双手柄的阶段 1 输入验收已于 2026-10-17 在 client 完成。
 USB/ADB、TCP 8000、双侧 6-DoF 位姿和控制字段均已实测通过；本阶段仍然只验证输入，未连接 GELLO、Franka、MANUS、Sharpa 或 server recorder。
 
-阶段 2 的坐标映射、相对锚定、安全状态机和离线目标可视化已完成。下一步进入 P2 FR3 控制适配：先做离线 IK，再做隔离目标发布与 fake hardware；暂不直接上真实机器人，也不把阶段 2 夹具当成训练数据。
+阶段 2 的坐标映射、相对锚定、安全状态机和离线目标可视化已完成。2026-10-20 又完成了 ALVR/SteamVR → OpenVR → 既有 raw recorder 的双手柄实采链路，解决了当前 APK 没有 `Controllers Only` 模式的问题。下一步进入 P2 FR3 控制适配：先做离线 IK，再做隔离目标发布与 fake hardware；暂不直接上真实机器人，也不把阶段 2 夹具当成训练数据。
 
 阶段 2 保留的只读实测夹具为 `recordings/quest_raw/stage2-sixdof-safety3.jsonl`：3945 个有效 pose、`dropped=0`，SHA-256 为 `2d84d7eb95cebb133998711684fe98038b862a47b72939a10eadf9beadbf7a66`。实测上、右、前三轴映射和两次 pitch 与当前转换一致，三个锚点处目标跳变为零。该文件包含一次实际断流，仅用于安全回放，不是连续 episode 或训练数据。
 
 正式采集策略已经冻结：TCP 连接变化即判当前 episode 无效并整条重采，不把重连前后的片段拼接为一条数据，也不要求在同一 episode 内恢复跟随。
+
+当前推荐的手柄原始采集入口为 `scripts/record_meta_quest_openvr.sh`。成功实测文件 `recordings/quest_raw/stage2-openvr-controller-20261020.jsonl` 包含 4151 个 lossless pose，`rejected=0`、`dropped=0`，左右手柄位姿均连续变化，右手 trigger、clutch、record 均记录到状态切换。详细复现与结果见本文第 11 节。
 
 ## 2. 三份文档的分工与进度
 
@@ -19,7 +21,7 @@ USB/ADB、TCP 8000、双侧 6-DoF 位姿和控制字段均已实测通过；本�
 |---|---|---|
 | [Status-TODOs.md](Status-TODOs.md) | 工程迁移状态、环境边界、复现入口及整体待办 | client/server 隔离和 GELLO 基线已验收，可进入 VR；VR 控制与数采闭环未完成 |
 | [VR-Collection-Workflow-Draft.md](VR-Collection-Workflow-Draft.md) | 后续 VR 数采行为设计 | 主要流程已通过讨论明确，尚未实现；暂不合并到 Status-TODOs |
-| 本文 | 当前 Quest 接入交接清单 | 阶段 1 双手柄输入已通过；异常矩阵与机器人侧功能未完成 |
+| 本文 | 当前 Quest 接入交接清单 | APK/ADB 与 ALVR/OpenVR 两条输入路径均已验证；机器人侧功能未完成 |
 
 ### 已有工程基线
 
@@ -61,6 +63,7 @@ USB/ADB、TCP 8000、双侧 6-DoF 位姿和控制字段均已实测通过；本�
 - 检查时发现继承的 `PYTHONPATH` 可使 `lerobot-vr` 搜索到 `/opt/ros/humble` 下的包，需要避免这种路径污染。
 - 缺依赖时只补实际需要的部分，记录安装前后版本；若需要替换 Python、Torch、NumPy 等核心库，先评估对已有流程的影响。
 - 不修改旧 `lerobot`、Conda base、系统 Python/ROS 或公共 Franka 工作空间；工程修改限制在当前项目。若缺 ADB 或设备权限，记录缺口并按本机管理权限处理，不顺带修改系统 Python。
+- ALVR/OpenVR bridge 使用 client 已有的独立 Python 3.11、`openvr==2.12.1401` 和 SteamVR runtime；路径由 `scripts/start_meta_quest_openvr_bridge.sh` 固定并检查，不把 OpenVR/SteamVR 依赖强装进 `lerobot-vr`。
 
 当前启动脚本使用裸 `python`，尚未固定环境。因此接手时先显式激活 `lerobot-vr`；后续可复用项目的环境选择机制改进入口，而不是依赖操作者终端的偶然状态。
 
@@ -107,11 +110,21 @@ VR：   Quest -> mapping/state/safety -> IK -> /right/vr/raw_joint_states -> con
 | [visualizer.py](data_collection/meta_quest/visualizer.py) | 原始 Unity 坐标系中的位姿显示 |
 | [power.py](data_collection/meta_quest/power.py) | 通过 ADB 管理头显唤醒 |
 | [calibration.py](data_collection/meta_quest/calibration.py) | 锚点数学基础，不是完整机器人坐标转换或控制状态机 |
+| [openvr_bridge.py](data_collection/meta_quest/openvr_bridge.py) | 从 SteamVR/OpenVR 读取双手柄位姿与按键，转换成既有 TCP 输入格式；无机器人输出 |
+| [start_meta_quest_openvr_bridge.sh](scripts/start_meta_quest_openvr_bridge.sh) | 检查并启动独立 OpenVR 运行环境 |
+| [record_meta_quest_openvr.sh](scripts/record_meta_quest_openvr.sh) | 一键启动 raw recorder 与 OpenVR bridge，`Ctrl+C` 安全完成 JSONL |
 
-当前链路：
+原 APK/ADB 链路：
 
 ```text
 头显应用 → USB/ADB 上的 TCP 8000 → receiver → 协议校验 → 终端与位姿窗口
+```
+
+当前推荐的 ALVR/OpenVR 采集链路：
+
+```text
+Quest Touch 手柄 → ALVR/SteamVR → OpenVR bridge
+  → 本机 TCP 127.0.0.1:8000 → raw recorder → lossless JSONL
 ```
 
 原始位姿属于 Quest/Unity 追踪坐标系，四元数按 `xyzw` 解析；尚不能直接作为机器人基座目标。
@@ -287,7 +300,7 @@ grep -E 'grasp=1|clutch=1|record=1' \
 6. **监视器不保存原始轨迹。** `PoseReceiver` 只保存每侧最新值，monitor 默认只以 1 Hz 打印摘要。本轮日志可审计但不能重建约 50 Hz 运动；正式数采前应新增独立 raw input recorder，并明确它与 server LeRobot recorder 的职责。
 7. **按钮字段名与最终行为尚未对齐。** `grasp/clutch/record` 是旧协议语义，而流程草案把接管、夹爪和 episode 边界重新设计为状态机事件。不能直接把当前持续电平接到机器人或 recorder；必须冻结物理映射、做 rising-edge/debounce、重连清零和模式互斥。
 8. **保持唤醒不等于追踪有效。** Quest 脱戴、应用失焦或 tracking lifecycle 变化可使数据 stale。后续安全层必须按新鲜度进入保持，且不得把断流当成主动解除接管或自动归位信号。
-9. **DexArena 当前推荐链路与本机硬件不匹配。** DexArena 主文档推荐 ALVR + SteamVR + native mirror；client 的 Intel iGPU 路径实测在 SteamVR direct-mode RenderThread 崩溃。阶段 1 因此采用项目保留的 Unity/TCP fallback。后续应明确这是输入适配路径，不再把 ALVR 当 client 的必需前置条件，除非更换受支持的 GPU/运行环境后重新验收。
+9. **ALVR 的图像渲染限制不等于手柄输入不可用。** 阶段 1 时 client 的 Intel iGPU 在 SteamVR direct-mode 图像路径上出现过 RenderThread 问题，因此先采用 Unity/TCP fallback。2026-10-20 已确认 H.264 software encoding 下 ALVR 可以进入 `Streaming`，并且后台 OpenVR 应用能够连续读取左右手柄；当前只复用追踪输入，不依赖 SAPIEN/native mirror 提交 VR 图像。SAPIEN `RenderVRDisplay` 在不提交帧时会返回缓存姿态，不能再作为正式采集入口。
 
 ## 10. 通过接入验收后再做什么
 
@@ -295,3 +308,65 @@ grep -E 'grasp=1|clutch=1|record=1' \
 2. 适配 FR3 在线 IK、离散夹爪与归位模块，先完成离线/fake hardware 验证。
 3. 接入 server recorder 的准备、录制边界和候选审核，验证 A/B 数据内容。
 4. 另行安排实机联调，配置 Home、ReturnReady 和返回路径，完成单右臂 A/B 采集、校验与回放。
+
+## 11. 2026-10-20 ALVR/OpenVR 双手柄实采验收
+
+### 11.1 一键复现
+
+先在 client 打开 ALVR Dashboard 和 SteamVR。戴上 Quest，在头显中打开 ALVR，等 Dashboard 显示 `Streaming`；采集期间保持佩戴、唤醒并让 ALVR 位于前台。然后运行：
+
+```bash
+cd /home/landau/real-exp-vr
+conda activate lerobot-vr
+unset PYTHONPATH PYTHONHOME
+
+./scripts/record_meta_quest_openvr.sh \
+  --output recordings/quest_raw/<new-name>.jsonl
+```
+
+看到 pose 计数持续增长后执行动作，结束时按一次 `Ctrl+C`。一键脚本会先让 raw recorder 写 completion summary、将 `.partial` 原子改名，再停止 OpenVR bridge；已有输出不会覆盖。ALVR 离开 `Streaming` 时 bridge 会停止，避免继续写缓存姿态。该路线使用 Wi-Fi/SteamVR，不需要 `adb reverse`。
+
+环境自检但不连接录制器：
+
+```bash
+./scripts/start_meta_quest_openvr_bridge.sh --dry-run
+```
+
+若 SteamVR 重启后看不到 ALVR external driver，再执行一次：
+
+```bash
+/home/landau/.local/share/Steam/steamapps/common/SteamVR/bin/vrpathreg.sh \
+  adddriver /home/landau/real-exp-vr/tools/alvr-v20.8.1/lib64/alvr
+```
+
+### 11.2 实测结果
+
+```text
+文件：recordings/quest_raw/stage2-openvr-controller-20261020.jsonl
+大小：1,819,154 bytes
+记录：4151 poses，left=2076，right=2075
+完整性：schema=1, lossless，rejected=0，dropped=0
+SHA-256：411fd0428a830a47185d70e379b81c34f1e6db601a6db779fb23dc2e581e0e41
+```
+
+- 左手得到 1276 个不同 pose，右手得到 1489 个不同 pose，排除了持续缓存同一姿态。
+- 右手最大平移范围约为 x `0.3186 m`、y `0.4090 m`、z `0.2778 m`，相对起始最大旋转约 `179.3°`。
+- 模拟 trigger 写为 `grasp`；B/Y 共用的按键掩码写为 `clutch`；A/X 共用的按键掩码写为 `record`。实测 trigger 最大值 `1.0`，clutch 有 4 次状态切换，record 有 6 次状态切换。
+- `stage2-alvr-controller-20261020.jsonl` 和 `stage2-alvr-controller-worn-20261020.jsonl` 是 SAPIEN 缓存姿态失败样本，只保留诊断，不能用于动作分析或训练。
+- 采集只验证 Quest 手柄输入，没有启动 ROS、GELLO、Franka、MANUS、Sharpa 或 pair1 recorder。
+
+验证文件：
+
+```bash
+python -m data_collection.meta_quest.replay \
+  recordings/quest_raw/<new-name>.jsonl --summary-only
+sha256sum recordings/quest_raw/<new-name>.jsonl
+```
+
+### 11.3 测试与提交
+
+- Meta Quest 专项测试：`67 passed`。
+- `bash -n`、OpenVR dry-run 和 `git diff --check` 通过。
+- 分支：`feature/quest-stage2-target-preview`。
+- commit：`bd5153a feat(quest): add direct OpenVR recording pipeline`。
+- 原 GELLO pipeline、启动入口和 topic 未修改。下一步仍是 P2 FR3 离线 IK 与 fake hardware，不直接上真实机器人。

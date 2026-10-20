@@ -1,10 +1,10 @@
 # VR 数采升级：现状与待办
 
-更新日期：2026-10-17。只维护当前结论、复现入口与未完成任务；历史过程查 Git。
+更新日期：2026-10-20。只维护当前结论、复现入口与未完成任务；历史过程查 Git。
 
 ## 当前结论
 
-两端独立 ROS 构建及 server recorder 迁移已完成。用户确认新 client/server 的双臂 Franka 夹爪 GELLO 采集、校验与回放通过；server data/test 已完成 trim-initial 的 dry-run、正式裁剪及完整 validate_dataset 校验。Quest 阶段 2 输入、坐标映射、相对锚定、安全状态机和离线回放已完成，可以进入 P2 FR3 离线 IK 与 fake hardware 适配；尚未连接真实机器人。
+两端独立 ROS 构建及 server recorder 迁移已完成。用户确认新 client/server 的双臂 Franka 夹爪 GELLO 采集、校验与回放通过；server data/test 已完成 trim-initial 的 dry-run、正式裁剪及完整 validate_dataset 校验。Quest 阶段 2 输入、坐标映射、相对锚定、安全状态机和离线回放已完成；ALVR/SteamVR → OpenVR → 既有 raw recorder 的双手柄链路也已实采通过，可以进入 P2 FR3 离线 IK 与 fake hardware 适配；尚未连接真实机器人。
 
 当前阶段只固化 GELLO 兼容契约和 VR 旁路边界。直接在 client 的 `/home/landau/real-exp-vr` 中继续开发，不创建独立工作区；在 client 完成 Quest 单右臂摇操前，不同步或修改 server，也不重做已经通过的 GELLO 真机测试。
 
@@ -18,7 +18,7 @@
 | 系统 ROS / Python | Humble / 3.10 | Jazzy / 3.12 |
 | 独立 ROS 产物 | gello_software/ros2/{build,install,log}/client | gello_software/ros2/{build,install,log}/server |
 | 职责 | GELLO、机器人及夹爪控制，发布状态与 accepted target | 相机、DDS 订阅、ROS → ZMQ bridge |
-| Conda | GELLO arm/gripper 控制不调用 Conda；VR 按需使用 lerobot-vr | recorder、预处理与校验使用 lerobot-vr |
+| Conda | GELLO arm/gripper 控制不调用 Conda；VR raw recorder 使用 lerobot-vr，OpenVR bridge 使用已有独立 Python 3.11 | recorder、预处理与校验使用 lerobot-vr |
 
 - 本次 client 复核：干净系统环境下，franka_gello_state_publisher、franka_fr3_arm_controllers、franka_gripper_manager 的包前缀均位于当前项目 install/client。数采入口分别选择 install/client 和 install/server，并清理继承的旧路径。
 - Server 已有本机记录确认 LeRobot editable 和普通导入指向 /home/pair1/real-exp-vr/lerobot，recorder 导入、H.264 写入与 TorchCodec 读回通过；迁移提交为 0eaf5dba4f377f25e4880cf2360ca9c6919281bc。本次 SSH 认证失败，未重新复核远端，端到端结果依据用户确认。
@@ -97,8 +97,9 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
                   -> FR3 controller
                   -> /right/gello/accepted_joint_states
 
-新增 VR（尚未实现）
-  Quest receiver -> 坐标映射/相对锚定/安全状态机 -> FR3 IK
+新增 VR（输入与离线安全已实现；IK/控制未实现）
+  Quest -> ALVR/SteamVR -> OpenVR bridge -> receiver
+        -> 坐标映射/相对锚定/安全状态机 -> FR3 IK
                  -> /right/vr/raw_joint_states
                  -> FR3 controller
                  -> /right/vr/accepted_joint_states
@@ -111,7 +112,7 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
 - Client 承担 Quest 输入、坐标转换、离合、约束及 FR3 IK；client 摇操验证完成后，server 再沿用相机、bridge 与 recorder，并适配输入模式预检和录制事件。
 - 优先采用 VR 位姿 → FR3 IK → 现有关节控制器 → accepted target → bridge → recorder。保留 GELLO 默认行为，运行时只允许唯一命令源。
 - 保持既有动作 q_target[t+1] - q_measured[t] 及夹爪字段语义；目标必须来自控制器实际接受的目标。
-- Quest 参考 [meta_quest/README.md](data_collection/meta_quest/README.md)。DexArena 参考 /home/landau/yys/DexArena/data_gen/teleop/ 下的 io.py、wrist_servo.py、arm_ik.py；先确认 APK、协议、坐标手性、四元数顺序与工具偏置，再适配 FR3。
+- Quest 参考 [meta_quest/README.md](data_collection/meta_quest/README.md)。当前推荐输入为 `scripts/record_meta_quest_openvr.sh`：Quest Touch → ALVR/SteamVR → 后台 OpenVR → 本机 TCP receiver/raw recorder。DexArena 参考 /home/landau/yys/DexArena/data_gen/teleop/ 下的 io.py、wrist_servo.py、arm_ik.py；坐标手性和四元数顺序已验证，工具偏置留到 FR3 末端确认时标定。
 - [move_to_target_ee.py](data_collection/move_to_target_ee.py) 的优化 IK 可参考模型与约束，在线使用前需测量延迟、连续性与奇异点表现。
 - Server 预检目前包含 GELLO raw topic，VR 模式需显式适配；录制事件需边沿、去重与重连处理。
 - 当前 bridge 为 15 Hz；输入、控制和写入频率可不同，但 dataset FPS 必须匹配采样策略。断流后禁止 pending_packet 跨长间隔配对；跨机 monotonic 时钟不能直接比较。
@@ -122,6 +123,7 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
 ### P1：VR 输入与目标生成
 
 - [x] 固定 APK、源码与当前 controller 协议；物理按钮到最终接管/夹爪/录制语义仍待真机冻结。
+- [x] 增加不依赖 `Controllers Only` APK 的 ALVR/OpenVR 输入路径，并复用既有 TCP 协议与 raw recorder。`stage2-openvr-controller-20261020.jsonl` 已验证 4151 个 lossless pose，左右位姿连续变化，trigger、clutch、record 状态切换可达；SHA-256 为 `411fd0428a830a47185d70e379b81c34f1e6db601a6db779fb23dc2e581e0e41`。
 - [x] 统一输入适配器，复用 TCP receiver，并为每个有效包增加全局 sequence、TCP connection id 和主机接收时间。
 - [x] 实现非阻塞全速 JSONL 录制、完整性汇总和确定性回放；只读夹具 `stage2-sixdof-safety3.jsonl` 已验证 3945 包、无拒收、无队列丢包，SHA-256 为 `2d84d7eb95cebb133998711684fe98038b862a47b72939a10eadf9beadbf7a66`。
 - [x] 验证坐标手性、四元数顺序和六自由度运动方向。实测按上、右、前的顺序与 `robot_x=quest_z, robot_y=-quest_x, robot_z=quest_y` 一致，两次 pitch 也与旋转分量一致；固定工具偏置的代码接口已实现，实际数值留到 FR3 末端工具确认时标定。
@@ -132,6 +134,18 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
 验收：坐标映射正确；异常输入不会触发目标跳变；陈旧数据进入保持。
 
 `stage2-sixdof-safety3.jsonl` 仅作为阶段 2 坐标与安全回放夹具，不是训练数据。它包含一次实际断流和连接变化，正好用于验证故障保持；正式 episode 必须只有一个 TCP connection id。P1 在当前紧凑协议可观测范围内收尾，recenter/冻结不可区分是已知限制，不用恢复式重连测试阻塞 P2 离线 IK。
+
+ALVR/OpenVR 的固定复现入口为：
+
+```bash
+cd /home/landau/real-exp-vr
+conda activate lerobot-vr
+unset PYTHONPATH PYTHONHOME
+./scripts/record_meta_quest_openvr.sh \
+  --output recordings/quest_raw/<new-name>.jsonl
+```
+
+采集期间 Quest 必须保持佩戴、唤醒，ALVR Dashboard 必须为 `Streaming`。ALVR 离开 Streaming 时停止本条采集并整条重采，不使用冻结姿态续写。该输入链已提交为 `bd5153a feat(quest): add direct OpenVR recording pipeline`，Meta Quest 专项测试为 `67 passed`。
 
 ### P2：FR3 控制适配
 
