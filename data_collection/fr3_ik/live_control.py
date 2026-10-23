@@ -61,8 +61,8 @@ class LeftLiveControl:
             raise ValueError("clock_id is required")
         if not 0.0 < position_scale <= 1.0:
             raise ValueError("position_scale must be in (0, 1]")
-        if not 0.0 < max_tcp_offset_m <= 0.30:
-            raise ValueError("max_tcp_offset_m must be in (0, 0.30]")
+        if not 0.0 <= max_tcp_offset_m <= 0.30:
+            raise ValueError("max_tcp_offset_m must be in [0, 0.30]; 0 disables the radial cap")
         self.kin = kinematics
         self.clock_id = clock_id
         self.position_scale = float(position_scale)
@@ -339,7 +339,11 @@ class LeftLiveControl:
         target = self.home_pose.copy()
         delta = source[:3, 3] - self.source_anchor[:3, 3]
         target[:3, 3] = self.home_pose[:3, 3] + self.position_scale * delta
-        if float(np.linalg.norm(target[:3, 3] - self.home_pose[:3, 3])) > self.max_tcp_offset_m:
+        if (
+            self.max_tcp_offset_m > 0.0
+            and float(np.linalg.norm(target[:3, 3] - self.home_pose[:3, 3]))
+            > self.max_tcp_offset_m
+        ):
             limit_mm = self.max_tcp_offset_m * 1000.0
             self._fault(f"{limit_mm:g} mm TCP workspace exceeded; restart required")
             return ControlUpdate(self.state, self.reason)

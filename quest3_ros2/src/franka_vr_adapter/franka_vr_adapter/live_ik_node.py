@@ -84,10 +84,14 @@ class LeftLiveIkNode(Node):
         self.last_status = ("", "")
         self.create_timer(0.01, self._drain, callback_group=self._control_group)
         self.create_timer(0.5, self._status, callback_group=self._control_group)
-        limit_mm = self.core.max_tcp_offset_m * 1000.0
+        workspace = (
+            f"{self.core.max_tcp_offset_m * 1000.0:g} mm TCP cap"
+            if self.core.max_tcp_offset_m > 0.0
+            else "TCP radial cap disabled"
+        )
         self.get_logger().info(
             f"Left Quest source ready: Y toggles takeover/return, "
-            f"{limit_mm:g} mm TCP cap, no gripper control"
+            f"{workspace}, no gripper control"
         )
 
     @staticmethod
@@ -158,7 +162,10 @@ class LeftLiveIkNode(Node):
             "hardware_output": "strict IKResult only; adapter and controller remain separate gates",
             "button": "left Y",
             "position_scale": self.core.position_scale,
-            "max_tcp_offset_m": self.core.max_tcp_offset_m,
+            "max_tcp_offset_m": (
+                self.core.max_tcp_offset_m if self.core.max_tcp_offset_m > 0.0 else None
+            ),
+            "tcp_workspace_limit_enabled": self.core.max_tcp_offset_m > 0.0,
         }
         message = String()
         message.data = json.dumps(payload, separators=(",", ":"), sort_keys=True)
