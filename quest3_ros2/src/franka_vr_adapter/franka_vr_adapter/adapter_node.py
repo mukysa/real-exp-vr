@@ -91,6 +91,7 @@ class VrAdapterNode(Node):
         self.ik_result_topic = side_topic("ik_result_topic")
         self.raw_topic = side_topic("raw_topic")
         self.status_topic = side_topic("status_topic")
+        expected_sequence_step = int(self.get_parameter("expected_sequence_step").value)
         self.core = AdapterCore(
             side=self.side,
             robot_state_timeout_s=float(self.get_parameter("robot_state_timeout_s").value),
@@ -98,7 +99,13 @@ class VrAdapterNode(Node):
             ik_timeout_s=float(self.get_parameter("ik_timeout_s").value),
             max_joint_step_rad=float(self.get_parameter("max_joint_step_rad").value),
             velocity_scale=float(self.get_parameter("velocity_scale").value),
-            expected_sequence_step=int(self.get_parameter("expected_sequence_step").value),
+            # A non-positive value disables exact-gap checking while retaining
+            # the strictly-increasing check.  Live control intentionally emits
+            # no IK results while READY, so a new Y takeover can legitimately
+            # resume at a later receiver sequence.
+            expected_sequence_step=(
+                expected_sequence_step if expected_sequence_step > 0 else None
+            ),
         )
         self.trace = JsonlTraceWriter(str(self.get_parameter("trace_path").value))
         self.latest_measured_positions: tuple[float, ...] | None = None
@@ -199,6 +206,11 @@ class VrAdapterNode(Node):
         self.trace.write(
             "decision", publish=decision.would_publish, reason=decision.reason,
             sequence=result.request.target.source_sequence,
+            target_position_m=list(result.request.target.pose.position),
+            command_positions_rad=(
+                None if result.command is None
+                else list(result.command.joints.positions_rad)
+            ),
         )
         if not decision.would_publish or decision.joint_target is None:
             return

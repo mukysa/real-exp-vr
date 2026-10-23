@@ -21,7 +21,10 @@ def generate_launch_description() -> LaunchDescription:
             parameters=[{
                 "side": "left",
                 "trace_path": ParameterValue(trace_path, value_type=str),
-                "expected_sequence_step": 1,
+                # Receiver sequences continue advancing while the source is
+                # READY and emits no IKResult.  Require monotonicity, but do
+                # not treat that intentional inter-episode gap as packet loss.
+                "expected_sequence_step": 0,
             }],
             output="screen",
         ),

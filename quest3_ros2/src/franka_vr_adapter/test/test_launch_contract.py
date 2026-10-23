@@ -32,3 +32,10 @@ def test_adapter_launch_has_no_robot_controller_or_gello_node() -> None:
     assert "synthetic" not in source
     assert "172.16." not in source
     assert "franka_gello_state_publisher" not in source
+
+
+def test_left_live_launch_allows_inter_episode_sequence_gaps() -> None:
+    source = (PACKAGE_ROOT / "launch" / "left_live_control.launch.py").read_text()
+
+    ast.parse(source)
+    assert '"expected_sequence_step": 0' in source

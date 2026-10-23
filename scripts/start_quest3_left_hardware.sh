@@ -180,14 +180,23 @@ start_process openvr bash "${repository_root}/scripts/start_meta_quest_openvr_br
   --single-left --host 127.0.0.1 --port 8001
 bridge_pid="${children[${#children[@]}-1]}"
 last_status=""
+last_adapter_status=""
 while kill -0 "${bridge_pid}" 2>/dev/null; do
   current_status="$(
     timeout 2s ros2 topic echo /left/vr/source_status --once --field data --no-daemon \
       2>/dev/null | head -1 || true
   )"
   if [[ -n "${current_status}" && "${current_status}" != "${last_status}" ]]; then
-    echo "STATUS ${current_status}"
+    echo "SOURCE_STATUS ${current_status}"
     last_status="${current_status}"
+  fi
+  adapter_status="$(
+    timeout 2s ros2 topic echo /left/vr/status --once --field data --no-daemon \
+      2>/dev/null | head -1 || true
+  )"
+  if [[ -n "${adapter_status}" && "${adapter_status}" != "${last_adapter_status}" ]]; then
+    echo "ADAPTER_STATUS ${adapter_status}"
+    last_adapter_status="${adapter_status}"
   fi
   sleep 0.2
 done

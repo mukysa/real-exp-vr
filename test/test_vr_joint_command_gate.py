@@ -142,6 +142,13 @@ def test_rejects_duplicate_gap_and_clock_mismatch() -> None:
     assert gate.assess(following(), measured(), wrong_clock).reject_reason == "clock_domain_mismatch"
 
 
+def test_live_mode_allows_increasing_sequence_across_ready_interval() -> None:
+    gate = ready_gate(expected_sequence_step=None)
+    assert gate.assess(following(), measured(), stamp(1.01)).would_publish
+    resumed = gate.assess(following(416, 1.05), measured(1.05), stamp(1.05))
+    assert resumed.would_publish
+
+
 def test_velocity_limit_and_fault_latch_require_reanchor() -> None:
     gate = ready_gate()
     assert gate.assess(following(), measured(), stamp(1.01)).would_publish
