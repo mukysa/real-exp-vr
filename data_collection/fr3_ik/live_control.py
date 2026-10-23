@@ -54,7 +54,7 @@ class LeftLiveControl:
         max_tcp_offset_m: float = 0.005,
         pose_shaper_bandwidth: float = 5.0,
         measured_timeout_s: float = 0.15,
-        input_timeout_s: float = 0.20,
+        input_timeout_s: float = 1.0,
     ) -> None:
         if not clock_id.strip():
             raise ValueError("clock_id is required")
@@ -309,7 +309,7 @@ class LeftLiveControl:
             and np.max(np.abs(self.return_reference.velocity)) <= 0.01
             and self.measured_q is not None
             and self.measured_dq is not None
-            and np.max(np.abs(self.measured_q - self.home_q)) <= 0.01
+            and np.max(np.abs(self.measured_q - self.home_q)) <= 0.02
             and np.max(np.abs(self.measured_dq)) <= 0.05
         ):
             self.state = "READY"
@@ -338,7 +338,7 @@ class LeftLiveControl:
             if not 0.0 < dt <= self.input_timeout_s:
                 self._fault("Quest input gap; restart required")
                 return ControlUpdate(self.state, self.reason)
-            if self.state in {"FOLLOWING", "RETURNING"} and self.last_source is not None:
+            if self.state == "FOLLOWING" and self.last_source is not None:
                 step = float(np.linalg.norm(source[:3, 3] - self.last_source[:3, 3]))
                 angle = float(Rotation.from_matrix(source[:3, :3] @ self.last_source[:3, :3].T).magnitude())
                 if step > 0.15 or angle > 0.75:

@@ -50,6 +50,13 @@ def test_y_captures_measured_anchor_and_second_y_returns() -> None:
     assert core.state == "READY"
     assert "return complete" in core.reason
 
+    core.update_measured(Q, (0.0,) * 7, 1.44)
+    core.process(sample(7, 1.44, y=False))
+    core.update_measured(Q, (0.0,) * 7, 1.64)
+    reengaged = core.process(sample(8, 1.64, y=True))
+    assert core.state == "FOLLOWING"
+    assert reengaged.result is not None and reengaged.result.success
+
 
 def test_scaled_workspace_is_hard_capped_at_five_mm() -> None:
     core = LeftLiveControl(Kinematics("left"), clock_id="test")
