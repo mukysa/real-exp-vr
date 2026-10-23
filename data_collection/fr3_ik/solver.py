@@ -183,11 +183,18 @@ class ContinuousIK:
                 tracking.update(reference_info, null_gain=0.0)
                 self.diagnostics.update(tracking)
             else:
-                candidate = solve_fr3_ik(np.asarray(self.last.joints.positions_rad), desired,
-                                     self.kinematics.tool, kinematics=self.kinematics,
-                                     try_alternative_seeds=False, max_function_evaluations=self.max_evaluations)
-                q = candidate.q
-                self.diagnostics['evaluations'] = candidate.function_evaluations
+                # The first frame after takeover normally asks for the exact
+                # measured anchor.  Reuse the already verified joint target
+                # instead of blocking live feedback on a redundant cold IK.
+                if max(residual(desired, self.last_requested_pose)) <= 1e-10:
+                    q = np.asarray(self.last.joints.positions_rad).copy()
+                    self.diagnostics['stationary_target_reused'] = True
+                else:
+                    candidate = solve_fr3_ik(np.asarray(self.last.joints.positions_rad), desired,
+                                         self.kinematics.tool, kinematics=self.kinematics,
+                                         try_alternative_seeds=False, max_function_evaluations=self.max_evaluations)
+                    q = candidate.q
+                    self.diagnostics['evaluations'] = candidate.function_evaluations
         except RuntimeError as exc:
             return fail(FailureReason.UNREACHABLE, 'No verified solution within budget: ' + str(exc))
         except (ValueError, np.linalg.LinAlgError) as exc:

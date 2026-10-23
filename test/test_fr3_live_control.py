@@ -40,6 +40,8 @@ def test_y_captures_measured_anchor_and_second_y_returns() -> None:
     core.update_measured(Q, (0.0,) * 7, 1.24)
     following = core.process(sample(5, 1.24))
     assert following.result is not None and following.result.success
+    assert core.solver.diagnostics["stationary_target_reused"] is True
+    assert core.solver.diagnostics["evaluations"] == 0
 
     core.update_measured(Q, (0.0,) * 7, 1.40)
     returning = core.process(sample(6, 1.40, y=True))

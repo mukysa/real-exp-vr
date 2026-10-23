@@ -6,10 +6,12 @@ import json
 from pathlib import Path
 from queue import Empty
 import sys
+from threading import Lock
 import time
 
 import rclpy
-from rclpy.executors import ExternalShutdownException
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
@@ -60,11 +62,17 @@ class LeftLiveIkNode(Node):
         self.status_publisher = self.create_publisher(
             String, str(self.get_parameter("status_topic").value), 10
         )
+        self._measured_lock = Lock()
+        self._latest_measured: tuple[list[float], list[float], float] | None = None
+        self._measured_error: str | None = None
+        self._measured_group = MutuallyExclusiveCallbackGroup()
+        self._control_group = MutuallyExclusiveCallbackGroup()
         self.create_subscription(
             JointState,
             str(self.get_parameter("measured_topic").value),
             self._on_measured,
             10,
+            callback_group=self._measured_group,
         )
         self.receiver = PoseReceiver(
             str(self.get_parameter("pose_host").value),
@@ -74,8 +82,8 @@ class LeftLiveIkNode(Node):
         self.receiver.start()
         self.result_count = 0
         self.last_status = ("", "")
-        self.create_timer(0.01, self._drain)
-        self.create_timer(0.5, self._status)
+        self.create_timer(0.01, self._drain, callback_group=self._control_group)
+        self.create_timer(0.5, self._status, callback_group=self._control_group)
         self.get_logger().info(
             "Left Quest source ready: Y toggles takeover/return, 5 mm TCP cap, no gripper control"
         )
@@ -97,9 +105,21 @@ class LeftLiveIkNode(Node):
             q = [values[f"fr3_joint{i}"][0] for i in range(1, 8)]
             dq = [values[f"fr3_joint{i}"][1] for i in range(1, 8)]
         except KeyError:
-            self.core._fault("invalid /left/joint_states names")
+            with self._measured_lock:
+                self._measured_error = "invalid /left/joint_states names"
             return
-        self.core.update_measured(q, dq, time.monotonic())
+        with self._measured_lock:
+            self._latest_measured = (q, dq, time.monotonic())
+            self._measured_error = None
+
+    def _sync_measured(self) -> None:
+        with self._measured_lock:
+            measured = self._latest_measured
+            error = self._measured_error
+        if error is not None:
+            self.core._fault(error)
+        elif measured is not None:
+            self.core.update_measured(*measured)
 
     def _publish_result(self, result) -> None:
         message = String()
@@ -108,6 +128,7 @@ class LeftLiveIkNode(Node):
         self.result_count += 1
 
     def _drain(self) -> None:
+        self._sync_measured()
         if self.subscription.dropped_records:
             self.core._fault("Quest input queue overflow; restart required")
         # Process at most one pose per executor turn.  IK can take tens of
@@ -116,10 +137,15 @@ class LeftLiveIkNode(Node):
         try:
             received = self.subscription.get_nowait()
         except Empty:
+            self.core.tick(time.monotonic())
             return
         update = self.core.process(received)
         if update.result is not None:
             self._publish_result(update.result)
+        # The measured callback remains live in the second executor thread
+        # while a strict IK solve is running.  Pull its newest sample before
+        # evaluating the watchdog.
+        self._sync_measured()
         self.core.tick(time.monotonic())
 
     def _status(self) -> None:
@@ -148,11 +174,14 @@ class LeftLiveIkNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = LeftLiveIkNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.try_shutdown()
 
