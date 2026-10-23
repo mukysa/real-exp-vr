@@ -21,6 +21,7 @@ from typing import Any, Sequence
 
 from .calibration import RigidPose
 from .coordinates import change_rotation_basis, transform_vector
+from .power import QuestKeepAwake
 from .steamvr_bridge import (
     BUTTON_A,
     BUTTON_B,
@@ -150,9 +151,10 @@ def _controller_controls(system: Any, controller_id: int, *, single_left: bool =
     return trigger, bool(mask & (BUTTON_Y if single_left else BUTTON_B)), bool(mask & BUTTON_A)
 
 
-def _wait_for_alvr(session_path: Path) -> None:
+def _wait_for_alvr(session_path: Path, power: QuestKeepAwake) -> None:
     last_report = 0.0
     while not alvr_is_streaming(session_path):
+        power.update(True)
         now = time.monotonic()
         if now - last_report >= 5.0:
             print(
@@ -171,23 +173,26 @@ def run_bridge(args: argparse.Namespace) -> None:
         return
 
     session_path = Path(args.alvr_session).expanduser()
-    if not args.no_alvr_wait:
-        _wait_for_alvr(session_path)
-
-    openvr.init(openvr.VRApplication_Background)
-    system = openvr.VRSystem()
-    roles = {
-        "left": openvr.TrackedControllerRole_LeftHand,
-        "right": openvr.TrackedControllerRole_RightHand,
-    }
-    selected = roles.items() if args.side == "both" else ((args.side, roles[args.side]),)
-    print(
-        f"Connecting direct OpenVR input to PoseReceiver at {args.host}:{args.port}; "
-        "robot_output_enabled=false",
-        flush=True,
-    )
-
+    power = QuestKeepAwake()
+    openvr_initialized = False
     try:
+        power.update(True)
+        if not args.no_alvr_wait:
+            _wait_for_alvr(session_path, power)
+
+        openvr.init(openvr.VRApplication_Background)
+        openvr_initialized = True
+        system = openvr.VRSystem()
+        roles = {
+            "left": openvr.TrackedControllerRole_LeftHand,
+            "right": openvr.TrackedControllerRole_RightHand,
+        }
+        selected = roles.items() if args.side == "both" else ((args.side, roles[args.side]),)
+        print(
+            f"Connecting direct OpenVR input to PoseReceiver at {args.host}:{args.port}; "
+            "robot_output_enabled=false",
+            flush=True,
+        )
         with socket.create_connection((args.host, args.port), timeout=3.0) as output:
             output.settimeout(None)
             frame_id = 0
@@ -197,6 +202,7 @@ def run_bridge(args: argparse.Namespace) -> None:
             last_ids: dict[str, int] = {}
             last_clutch: dict[str, bool] = {}
             while True:
+                power.update(True)
                 if not args.no_alvr_wait and not alvr_is_streaming(session_path):
                     print(
                         "ALVR left Streaming state; stopping instead of emitting cached poses.",
@@ -259,7 +265,9 @@ def run_bridge(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         print("Stopping OpenVR pose bridge cleanly.", flush=True)
     finally:
-        openvr.shutdown()
+        if openvr_initialized:
+            openvr.shutdown()
+        power.close()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
