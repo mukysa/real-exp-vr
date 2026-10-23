@@ -169,7 +169,7 @@ grep -Eq 'joint_impedance_controller.*active' <<<"${controller_status}" || {
 
 trace_path="${log_dir}/adapter.jsonl"
 start_process quest_control ros2 launch franka_vr_adapter left_live_control.launch.py \
-  trace_path:="${trace_path}" position_scale:=0.03 max_tcp_offset_m:=0.005
+  trace_path:="${trace_path}" position_scale:=0.03 max_tcp_offset_m:=0.02
 wait_for_port 8001
 wait_for_topic /left/vr/source_status
 wait_for_topic /left/vr/status

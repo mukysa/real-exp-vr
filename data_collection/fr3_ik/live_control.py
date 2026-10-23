@@ -340,7 +340,8 @@ class LeftLiveControl:
         delta = source[:3, 3] - self.source_anchor[:3, 3]
         target[:3, 3] = self.home_pose[:3, 3] + self.position_scale * delta
         if float(np.linalg.norm(target[:3, 3] - self.home_pose[:3, 3])) > self.max_tcp_offset_m:
-            self._fault("5 mm TCP workspace exceeded; restart required")
+            limit_mm = self.max_tcp_offset_m * 1000.0
+            self._fault(f"{limit_mm:g} mm TCP workspace exceeded; restart required")
             return ControlUpdate(self.state, self.reason)
         assert self.last_command is not None
         dt = now - self.last_command.stamp.seconds

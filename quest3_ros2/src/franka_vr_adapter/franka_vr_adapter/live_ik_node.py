@@ -84,8 +84,10 @@ class LeftLiveIkNode(Node):
         self.last_status = ("", "")
         self.create_timer(0.01, self._drain, callback_group=self._control_group)
         self.create_timer(0.5, self._status, callback_group=self._control_group)
+        limit_mm = self.core.max_tcp_offset_m * 1000.0
         self.get_logger().info(
-            "Left Quest source ready: Y toggles takeover/return, 5 mm TCP cap, no gripper control"
+            f"Left Quest source ready: Y toggles takeover/return, "
+            f"{limit_mm:g} mm TCP cap, no gripper control"
         )
 
     @staticmethod
