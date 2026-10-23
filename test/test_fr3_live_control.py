@@ -61,3 +61,18 @@ def test_scaled_workspace_is_hard_capped_at_five_mm() -> None:
     assert update.result is None
     assert core.state == "FAULT"
     assert "5 mm" in core.reason
+
+
+def test_newer_measured_callback_does_not_false_trip_stale_feedback() -> None:
+    core = LeftLiveControl(Kinematics("left"), clock_id="test")
+    ready(core)
+    core.update_measured(Q, (0.0,) * 7, 1.20)
+    core.process(sample(4, 1.20, y=True))
+
+    # ROS may dispatch a joint-state callback received just after the queued
+    # controller pose before it dispatches that pose callback.
+    core.update_measured(Q, (0.0,) * 7, 1.245)
+    update = core.process(sample(5, 1.24, x=0.01))
+
+    assert update.result is not None and update.result.success
+    assert core.state == "FOLLOWING"

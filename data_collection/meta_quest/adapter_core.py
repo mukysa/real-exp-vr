@@ -67,7 +67,7 @@ class AdapterCore:
         ik_timeout_s: float = 0.15,
         max_joint_step_rad: float = 0.10,
         velocity_scale: float = 1.0,
-        initial_match_tolerance_rad: float = 1e-6,
+        initial_match_tolerance_rad: float = 1e-4,
         expected_sequence_step: int | None = 2,
     ) -> None:
         if side not in {"left", "right"}:

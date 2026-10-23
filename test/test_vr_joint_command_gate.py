@@ -63,6 +63,12 @@ def test_valid_target_is_accepted_in_frozen_joint_order() -> None:
     assert decision.reject_reason is None
 
 
+def test_takeover_accepts_measured_feedback_quantization_jitter() -> None:
+    jittered = (Q0[0] + 5e-5,) + Q0[1:]
+    decision = ready_gate().assess(following(positions=jittered), measured(), stamp(1.01))
+    assert decision.would_publish is True
+
+
 @pytest.mark.parametrize(
     ("case", "reason"),
     [

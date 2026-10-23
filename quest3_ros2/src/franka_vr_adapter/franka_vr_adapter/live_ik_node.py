@@ -110,14 +110,16 @@ class LeftLiveIkNode(Node):
     def _drain(self) -> None:
         if self.subscription.dropped_records:
             self.core._fault("Quest input queue overflow; restart required")
-        for _ in range(128):
-            try:
-                received = self.subscription.get_nowait()
-            except Empty:
-                break
-            update = self.core.process(received)
-            if update.result is not None:
-                self._publish_result(update.result)
+        # Process at most one pose per executor turn.  IK can take tens of
+        # milliseconds, so draining the entire queue here would starve the
+        # measured-joint-state callback and falsely trip stale feedback.
+        try:
+            received = self.subscription.get_nowait()
+        except Empty:
+            return
+        update = self.core.process(received)
+        if update.result is not None:
+            self._publish_result(update.result)
         self.core.tick(time.monotonic())
 
     def _status(self) -> None:

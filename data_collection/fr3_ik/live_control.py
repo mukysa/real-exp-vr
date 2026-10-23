@@ -186,11 +186,14 @@ class LeftLiveControl:
         self.button.require_release()
 
     def _fresh_measured(self, now: float) -> bool:
+        # Pose and joint-state callbacks are independent.  A joint sample may
+        # legitimately be received just after the pose currently being
+        # processed, so accept bounded skew in either direction.
         return (
             self.measured_q is not None
             and self.measured_dq is not None
             and self.measured_stamp is not None
-            and 0.0 <= now - self.measured_stamp <= self.measured_timeout_s
+            and abs(now - self.measured_stamp) <= self.measured_timeout_s
         )
 
     def _engage(self, received: ReceivedPose, source: np.ndarray) -> IKResult | None:
@@ -345,7 +348,10 @@ class LeftLiveControl:
         request = self._request(received, shaped)
         measured = MeasuredJointState(
             JointVector(tuple(self.measured_q)) if self.measured_q is not None else self.last_command.joints,
-            self._stamp(self.measured_stamp if self.measured_stamp is not None else 0.0),
+            # ContinuousIK requires feedback no newer than the pose timestamp.
+            # Clamp only the timestamp; the feedback itself is already checked
+            # above to be within the bounded live window.
+            self._stamp(min(self.measured_stamp, now) if self.measured_stamp is not None else 0.0),
             "/left/joint_states",
             self._fresh_measured(now),
         )
