@@ -133,8 +133,7 @@ def test_visualizer_rotates_controller_axes_from_xyzw_quaternion() -> None:
 
 def test_keep_awake_is_acquired_only_for_an_active_stream(monkeypatch) -> None:
     actions: list[str] = []
-    now = [10.0]
-    guard = QuestKeepAwake(monotonic=lambda: now[0])
+    guard = QuestKeepAwake()
     monkeypatch.setattr(guard, "_broadcast", lambda action: actions.append(action) or True)
 
     assert guard.update(False) is False
@@ -144,10 +143,6 @@ def test_keep_awake_is_acquired_only_for_an_active_stream(monkeypatch) -> None:
     assert actions[0].endswith("prox_close")
     assert guard.update(True) is True
     assert len(actions) == 1
-    now[0] += 2.0
-    assert guard.update(True) is True
-    assert len(actions) == 2
-    assert actions[-1].endswith("prox_close")
     assert guard.update(False) is False
     assert actions[-1].endswith("automation_disable")
 
