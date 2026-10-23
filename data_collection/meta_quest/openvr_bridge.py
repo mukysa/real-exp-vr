@@ -31,6 +31,8 @@ from .steamvr_bridge import (
 
 # SteamVR Touch legacy bindings map left X and right A to the A button bit.
 BUTTON_X = BUTTON_A
+# The legacy B-button bit is reported for left Y and right B.
+BUTTON_Y = BUTTON_B
 
 
 # OpenVR tracking space is right-handed: x right, y up, -z forward.  The
@@ -145,7 +147,7 @@ def _controller_controls(system: Any, controller_id: int, *, single_left: bool =
     except (AttributeError, IndexError, TypeError):
         trigger = 1.0 if mask & BUTTON_TRIGGER else 0.0
     trigger = min(1.0, max(0.0, trigger))
-    return trigger, bool(mask & (BUTTON_X if single_left else BUTTON_B)), bool(mask & BUTTON_A)
+    return trigger, bool(mask & (BUTTON_Y if single_left else BUTTON_B)), bool(mask & BUTTON_A)
 
 
 def _wait_for_alvr(session_path: Path) -> None:
@@ -224,7 +226,7 @@ def run_bridge(args: argparse.Namespace) -> None:
                         system, controller_id, single_left=args.single_left
                     )
                     if args.single_left and last_clutch.get(side) != clutch:
-                        print(f"Left X clutch={'pressed' if clutch else 'released'}", flush=True)
+                        print(f"Left Y clutch={'pressed' if clutch else 'released'}", flush=True)
                         last_clutch[side] = clutch
                     line = compact_controller_line(
                         side=side,
@@ -267,7 +269,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--side", choices=("both", "left", "right"), default="both")
-    parser.add_argument("--single-left", action="store_true", help="left controller only; use X as clutch")
+    parser.add_argument("--single-left", action="store_true", help="left controller only; use Y as clutch")
     parser.add_argument("--poll-hz", type=float, default=30.0)
     parser.add_argument("--report-interval-s", type=float, default=5.0)
     parser.add_argument("--alvr-session", default="~/.config/alvr/session.json")

@@ -26,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "adapter_node = franka_vr_adapter.adapter_node:main",
+            "live_ik_node = franka_vr_adapter.live_ik_node:main",
         ],
     },
 )

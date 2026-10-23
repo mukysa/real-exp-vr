@@ -39,8 +39,8 @@ class PreviewEngine:
         if side not in self.reference:self.reference[side]=BoundedJointReference(self.limits,q)
 
     def stop(self, reason):
-        if self.active and reason in {'B stop','X stop'}:self.return_phase='BRAKING'
-        elif reason not in {'B stop','X stop'}:self.return_phase=None
+        if self.active and reason in {'B stop','Y stop'}:self.return_phase='BRAKING'
+        elif reason not in {'B stop','Y stop'}:self.return_phase=None
         self.active=False;self.reason=reason;self.status='HOLD';self.button.require_release()
         self.events.append(dict(time=time.monotonic(),action='stop',reason=reason));self.events=self.events[-100:]
 
@@ -71,12 +71,12 @@ class PreviewEngine:
         if not self.button.update(pressed,now):return
         if self.active:
             if self.single_left:
-                self.stop('X stop')
+                self.stop('Y stop')
                 return
             self.stop('B stop');return
         if self.return_phase is not None:
-            self.reason='X rejected: virtual return in progress' if self.single_left else 'B rejected: virtual return in progress';return
-        if not self.ready(now):self.reason='X rejected: left input/feedback must be fresh' if self.single_left else 'B rejected: both streams/feedback must be fresh and braking finished';return
+            self.reason='Y rejected: virtual return in progress' if self.single_left else 'B rejected: virtual return in progress';return
+        if not self.ready(now):self.reason='Y rejected: left input/feedback must be fresh' if self.single_left else 'B rejected: both streams/feedback must be fresh and braking finished';return
         for side in self.sides:
             q=self.feedback[side]['q'];self.home[side]=q.copy();self.reference[side]=BoundedJointReference(self.limits,q)
             target=self.mounts[side]@self.kin[side].fk(q)
@@ -85,7 +85,7 @@ class PreviewEngine:
             self.calibration[side]=PoseCalibration.from_anchor(matrix_pose(src),matrix_pose(target),motion_mapping='spatial-relative')
             self.anchor_source[side]=src.copy();self.desired[side]=target.copy()
             self.shapers[side].reset(target[:3,3],Rotation.from_matrix(target[:3,:3]))
-        self.active=True;self.takeover=True;self.status='FOLLOWING';self.reason=('X engaged from measured left arm' if self.single_left else 'B engaged from measured joints')
+        self.active=True;self.takeover=True;self.status='FOLLOWING';self.reason=('Y engaged from measured left arm' if self.single_left else 'B engaged from measured joints')
         self.events.append(dict(time=now,action='engage'));self.events=self.events[-100:]
 
     def tick(self, now):
@@ -107,7 +107,7 @@ class PreviewEngine:
             if self.return_elapsed>=self.return_duration+dt:
                 for ref in self.reference.values():ref.velocity=np.zeros(7)
                 self.return_phase=None;self.button.require_release()
-                self.reason='virtual return complete; release X then press to engage' if self.single_left else 'virtual return complete; release B then press to engage'
+                self.reason='virtual return complete; release Y then press to engage' if self.single_left else 'virtual return complete; release B then press to engage'
                 self.events.append(dict(time=now,action='home_complete'));self.events=self.events[-100:]
             self.status='RETURNING' if self.return_phase else ('READY' if fresh else 'WAITING')
             return
@@ -136,7 +136,7 @@ class PreviewEngine:
                     float(np.max(1.875*distance/np.asarray(self.limits.velocity))),
                     float(np.max(np.sqrt(5.774*distance/np.asarray(self.limits.acceleration)))))
             self.return_elapsed=0.;self.return_phase='RETURNING';self.status='RETURNING'
-            self.reason='returning virtual left arm to takeover start; X locked' if self.single_left else 'returning virtual arms to takeover start; B locked'
+            self.reason='returning virtual left arm to takeover start; Y locked' if self.single_left else 'returning virtual arms to takeover start; B locked'
             self.takeover=False
             return
         self.takeover=False
@@ -144,8 +144,8 @@ class PreviewEngine:
         elif not self.active:self.status='READY' if fresh else 'WAITING'
         if not self.active and self.reason in {
             'waiting for left input and feedback','waiting for both inputs and feedback',
-            'left input and feedback ready; press X to engage','both inputs and feedback ready; press B to engage'}:
-            if fresh:self.reason='left input and feedback ready; press X to engage' if self.single_left else 'both inputs and feedback ready; press B to engage'
+            'left input and feedback ready; press Y to engage','both inputs and feedback ready; press B to engage'}:
+            if fresh:self.reason='left input and feedback ready; press Y to engage' if self.single_left else 'both inputs and feedback ready; press B to engage'
             else:self.reason='waiting for left input and feedback' if self.single_left else 'waiting for both inputs and feedback'
 
     def state(self, now):

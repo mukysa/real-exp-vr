@@ -14,8 +14,16 @@ int main(int argc, char** argv) {
       auto now=std::chrono::steady_clock::now();
       if(now-last<std::chrono::milliseconds(20)) return true;
       last=now;
-      std::cout << "{\"q\":[";
+      const double host_monotonic_s =
+          std::chrono::duration<double>(now.time_since_epoch()).count();
+      std::cout << "{\"host_monotonic_s\":" << host_monotonic_s
+                << ",\"robot_time_ms\":" << s.time.toMSec()
+                << ",\"q\":[";
       for(int i=0;i<7;i++) std::cout << (i?",":"") << s.q[i];
+      std::cout << "],\"dq\":[";
+      for(int i=0;i<7;i++) std::cout << (i?",":"") << s.dq[i];
+      std::cout << "],\"O_T_EE\":[";
+      for(int i=0;i<16;i++) std::cout << (i?",":"") << s.O_T_EE[i];
       std::cout << "],\"F_T_EE\":[";
       for(int i=0;i<16;i++) std::cout << (i?",":"") << s.F_T_EE[i];
       std::cout << "]}" << std::endl;

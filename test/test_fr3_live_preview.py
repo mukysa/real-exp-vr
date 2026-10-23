@@ -180,7 +180,7 @@ def test_single_left_x_smoothly_returns_locks_button_and_reengages(single_rig):
             complete=True
             np.testing.assert_allclose(ref.position,home,atol=1e-12)
             break
-    assert saw_return and complete and e.reason=='virtual return complete; release X then press to engage'
+    assert saw_return and complete and e.reason=='virtual return complete; release Y then press to engage'
     feed(t+.02,True,offset=.15);e.tick(t+.02);assert not e.active
     feed(t+.04,False,offset=.15);e.tick(t+.04)
     for j in range(3,12):feed(t+j*.02,False,offset=.15);e.tick(t+j*.02)
@@ -249,12 +249,12 @@ def test_ready_reason_updates_when_left_input_arrives(single_rig):
     e.update_feedback('left',q,.98,'MOCK');e.tick(.98)
     assert e.status=='WAITING'
     feed(1);e.tick(1)
-    assert e.status=='READY' and e.reason=='left input and feedback ready; press X to engage'
+    assert e.status=='READY' and e.reason=='left input and feedback ready; press Y to engage'
     for i in range(1,17):e.tick(1+i*.02)
     assert e.status=='WAITING' and e.reason=='waiting for left input and feedback'
 
 
-def test_openvr_left_x_through_wire_protocol_engages_and_stops(single_rig):
+def test_openvr_left_y_through_wire_protocol_engages_and_stops(single_rig):
     from types import SimpleNamespace
     from data_collection.meta_quest.openvr_bridge import _controller_controls
     from data_collection.meta_quest.steamvr_bridge import compact_controller_line
@@ -270,15 +270,15 @@ def test_openvr_left_x_through_wire_protocol_engages_and_stops(single_rig):
         e.update_feedback('left',q,t,'MOCK')
         e.pose(ReceivedPose(sample,t,int(t*1000),1),t);e.tick(t)
     send(1,0)
-    send(1.02,1 << 1)  # Y is not the configured single-left clutch.
+    send(1.02,1 << 7)  # X is not the configured single-left clutch.
     assert not e.active
     send(1.04,0)
-    send(1.06,1 << 7)  # Touch left X is the A button bit.
+    send(1.06,1 << 1)  # Touch left Y shares the B button bit.
     assert e.active and e.state(1.06)['arms']['left']['clutch_pressed']
     np.testing.assert_array_equal(e.reference['left'].position,q)
     for i in range(1,11):
         send(1.06+i*.02,0)
-        assert e.active  # Releasing X does not stop.
+        assert e.active  # Releasing Y does not stop.
     send(1.28,0)
-    send(1.30,1 << 7)
+    send(1.30,1 << 1)
     assert not e.active and e.return_phase in {'BRAKING','RETURNING'}
