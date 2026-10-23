@@ -53,6 +53,11 @@ set -u
 
 command -v ros2 >/dev/null
 command -v flock >/dev/null
+controller_spawner="$(ros2 pkg prefix controller_manager)/lib/controller_manager/spawner"
+[[ -x "${controller_spawner}" ]] || {
+  echo "Error: controller_manager spawner is unavailable: ${controller_spawner}" >&2
+  exit 1
+}
 [[ "$(ros2 pkg prefix franka_fr3_arm_controllers)" == "${controller_install}"* ]]
 [[ "$(ros2 pkg prefix franka_vr_adapter)" == "${quest_install}"* ]]
 bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" --single-left --dry-run
@@ -77,6 +82,7 @@ left_gello_publishers="$(awk '/Publisher count:/ {print $3}' <<<"${left_gello_in
 }
 if ss -ltn | awk '{print $4}' | grep -Eq ':(8000|8001)$'; then
   echo "Error: Quest TCP port 8000 or 8001 is already in use." >&2
+  echo "Stop start_fr3_live_preview.sh (Ctrl+C in its terminal) before hardware mode." >&2
   exit 1
 fi
 
@@ -97,7 +103,8 @@ cleanup() {
   done
   echo "Stopped. The FR3 command watchdog is no longer receiving targets. Logs: ${log_dir}"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 start_process() {
   local name="$1"; shift
   setsid -- "$@" >"${log_dir}/${name}.log" 2>&1 &
@@ -127,20 +134,33 @@ start_process hardware ros2 launch franka_fr3_arm_controllers franka.launch.py \
   robot_ip:=172.16.0.3 load_gripper:=false \
   use_fake_hardware:=false fake_sensor_commands:=false \
   joint_sources:=joint_states joint_state_rate:=30 deployment_mode:=false
+hardware_pid="${children[${#children[@]}-1]}"
 wait_for_topic /left/joint_states
 
-start_process impedance ros2 run controller_manager spawner joint_impedance_controller \
+start_process impedance "${controller_spawner}" joint_impedance_controller \
   --controller-manager /left/controller_manager \
   --controller-manager-timeout 30 \
   --param-file "${controller_yaml}" \
   --param-file "${vr_yaml}"
+impedance_pid="${children[${#children[@]}-1]}"
 deadline=$((SECONDS + 30))
 while ((SECONDS < deadline)); do
-  if ros2 control list_controllers -c /left/controller_manager 2>/dev/null \
+  kill -0 "${hardware_pid}" 2>/dev/null || {
+    echo "Error: left FR3 hardware process exited. See ${log_dir}/hardware.log" >&2
+    exit 1
+  }
+  if timeout 3s ros2 control list_controllers -c /left/controller_manager 2>/dev/null \
       | grep -Eq '^joint_impedance_controller[[:space:]].*active'; then break; fi
+  if ! kill -0 "${impedance_pid}" 2>/dev/null; then
+    if timeout 3s ros2 control list_controllers -c /left/controller_manager 2>/dev/null \
+        | grep -Eq '^joint_impedance_controller[[:space:]].*active'; then break; fi
+    echo "Error: impedance controller spawner exited before activation." >&2
+    tail -20 "${log_dir}/impedance.log" >&2 || true
+    exit 1
+  fi
   sleep 0.5
 done
-ros2 control list_controllers -c /left/controller_manager \
+timeout 3s ros2 control list_controllers -c /left/controller_manager \
   | grep -Eq '^joint_impedance_controller[[:space:]].*active' \
   || { echo "Error: left impedance controller did not become active." >&2; exit 1; }
 
