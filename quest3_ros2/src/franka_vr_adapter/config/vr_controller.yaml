@@ -1,0 +1,10 @@
+# Quest 3 overrides for the existing, validated FR3 impedance controller.
+# Gains, limits, the 1 kHz reference generator, and watchdog behavior continue
+# to come from franka_fr3_arm_controllers/config/controllers.yaml.
+/**:
+  joint_impedance_controller:
+    ros__parameters:
+      command_topic: vr/raw_joint_states
+      accepted_target_topic: vr/accepted_joint_states
+      activation_mode: always
+      command_timeout_sec: 0.5

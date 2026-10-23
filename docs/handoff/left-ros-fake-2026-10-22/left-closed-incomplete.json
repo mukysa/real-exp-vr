@@ -1,0 +1,82 @@
+{
+  "adapter_exit_observed_monotonic_s": 3207050.836794441,
+  "all_passed": false,
+  "checks": {
+    "accepted_joint_order": true,
+    "accepted_stopped_after_exit": true,
+    "adapter_command_stream_stopped": false,
+    "all_streams_finite": true,
+    "controller_reference_moved": true,
+    "controller_reference_settled": false,
+    "first_command_reanchored": true,
+    "measured_stream_continuous": true,
+    "raw_accepted_match": true,
+    "raw_joint_order": true,
+    "raw_stopped_after_exit": true,
+    "sample_counts_sufficient": true
+  },
+  "dynamic_tracking_limitation": "The ROS mock_generic_system exposes a static measured joint state under this effort-controller setup. This run validates command transport, safety gating, topic continuity, and controller timeout, but cannot validate physical joint tracking dynamics.",
+  "dynamic_tracking_validated": false,
+  "generated_at_unix_s": 1792665505.6743426,
+  "measurement_duration_s": 5.0,
+  "measurement_started_monotonic_s": 3207025.814680935,
+  "post_exit_counts": {
+    "accepted": 0,
+    "commanded": 0,
+    "measured": 0,
+    "raw": 0
+  },
+  "post_exit_duration_s": 1.0,
+  "pre_exit_counts": {
+    "accepted": 99,
+    "commanded": 489,
+    "measured": 146,
+    "raw": 99
+  },
+  "raw_accepted": {
+    "coverage": 1.0,
+    "left_skip": 0,
+    "matched_count": 99,
+    "max_error_rad": 0.0,
+    "right_skip": 0
+  },
+  "raw_publisher_count_after_exit": 0,
+  "shutdown_transition_counts": {
+    "accepted": 398,
+    "commanded": 2010,
+    "measured": 600,
+    "raw": 399
+  },
+  "stream_metrics": {
+    "accepted_max_step_rad": 0.0005087946626391639,
+    "commanded_span_rad": 0.019980544715630384,
+    "controller_settle_time_after_adapter_exit_s": null,
+    "measured_max_gap_s": 0.09451361792162061,
+    "measured_max_step_rad": 0.0,
+    "measured_span_rad": 0.0,
+    "raw_max_step_rad": 0.0005087946626391639
+  },
+  "trace": {
+    "counts": {
+      "accepted": 1198,
+      "measured": 40995,
+      "raw": 1208,
+      "requested": 1208
+    },
+    "first_raw_from_anchor_error_rad": 0.0,
+    "raw_accepted": {
+      "coverage": 0.9917218543046358,
+      "left_skip": 2,
+      "matched_count": 1198,
+      "max_error_rad": 0.003362195402879615,
+      "right_skip": 0
+    },
+    "requested_raw": {
+      "coverage": 1.0,
+      "left_skip": 0,
+      "matched_count": 1208,
+      "max_error_rad": 0.0,
+      "right_skip": 0
+    }
+  }
+}
