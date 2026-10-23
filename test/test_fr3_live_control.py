@@ -104,6 +104,26 @@ def test_zero_workspace_cap_disables_radial_limit() -> None:
     assert "TCP workspace exceeded" not in core.reason
 
 
+def test_y_after_fault_reanchors_at_measured_state_and_returns() -> None:
+    core = LeftLiveControl(Kinematics("left"), clock_id="test")
+    ready(core)
+    core.update_measured(Q, (0.0,) * 7, 1.20)
+    core.process(sample(4, 1.20, y=True))
+    core.update_measured(Q, (0.0,) * 7, 1.24)
+    core.process(sample(5, 1.24, y=False))
+    core._fault("test recoverable stop")
+
+    core.update_measured(Q, (0.0,) * 7, 1.28)
+    core.process(sample(6, 1.28, y=False))
+    core.update_measured(Q, (0.0,) * 7, 1.48)
+    recovery = core.process(sample(7, 1.48, y=True))
+
+    assert core.state == "RETURNING"
+    assert recovery.result is not None and recovery.result.success
+    assert recovery.result.command.joints.positions_rad == Q
+    assert "returning from measured state" in core.reason
+
+
 def test_newer_measured_callback_does_not_false_trip_stale_feedback() -> None:
     core = LeftLiveControl(Kinematics("left"), clock_id="test")
     ready(core)

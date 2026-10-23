@@ -27,7 +27,6 @@ from .interfaces import (
     IKResult,
     JointTarget,
     JointVector,
-    MeasuredJointState,
     ResultState,
     Timestamp,
 )
@@ -240,6 +239,39 @@ class LeftLiveControl:
         self.reason = "second Y accepted; returning to takeover anchor"
         return self._return(received)
 
+    def _recover_return(self, received: ReceivedPose) -> IKResult | None:
+        """Re-anchor a stopped episode at measured q, then return on Y."""
+
+        now = received.received_monotonic_s
+        if not self._fresh_measured(now):
+            self.reason = "Y return rejected: measured state is not fresh"
+            return None
+        if self.home_q is None or self.measured_q is None or self.measured_dq is None:
+            self.reason = "Y return rejected: takeover anchor is unavailable"
+            return None
+        current = self.measured_q.copy()
+        anchor = JointTarget(JointVector(tuple(current)), self._stamp(now))
+        self.last_command = anchor
+        self.return_reference = BoundedJointReference(self.limits, current)
+        self.return_reference.velocity = self.measured_dq.copy()
+        self.return_last_stamp = now
+        self.state = "RETURNING"
+        self.reason = "Y accepted after stop; returning from measured state"
+        request = self._request(received, self.kin.fk(current))
+        return IKResult(
+            request,
+            ResultState.FOLLOWING,
+            FailureReason.NONE,
+            "Measured-state recovery anchor before bounded return",
+            anchor,
+            anchor,
+            0.0,
+            0.0,
+            0.0,
+            ConstraintChecks(True, True, True, True, True),
+            self._stamp(time.monotonic()),
+        )
+
     def _return(self, received: ReceivedPose) -> IKResult:
         assert self.home_q is not None
         assert self.return_reference is not None
@@ -289,8 +321,6 @@ class LeftLiveControl:
         sample = received.sample
         if sample.side != "left" or sample.source != "controller":
             return ControlUpdate(self.state, self.reason)
-        if self.state == "FAULT":
-            return ControlUpdate(self.state, self.reason)
         if not sample.tracked:
             self._fault("left controller tracking invalid")
             return ControlUpdate(self.state, self.reason)
@@ -317,6 +347,10 @@ class LeftLiveControl:
         self.last_pose_stamp = now
         self.last_source = source.copy()
         edge = self.button.update(bool(sample.clutch), now)
+
+        if self.state == "FAULT":
+            result = self._recover_return(received) if edge else None
+            return ControlUpdate(self.state, self.reason, result)
 
         if self.state == "WAITING":
             self.healthy_samples += 1
@@ -351,22 +385,21 @@ class LeftLiveControl:
         dt = now - self.last_command.stamp.seconds
         shaped = self.shaper.update(target, dt)
         request = self._request(received, shaped)
-        measured = MeasuredJointState(
-            JointVector(tuple(self.measured_q)) if self.measured_q is not None else self.last_command.joints,
-            # ContinuousIK requires feedback no newer than the pose timestamp.
-            # Clamp only the timestamp; the feedback itself is already checked
-            # above to be within the bounded live window.
-            self._stamp(min(self.measured_stamp, now) if self.measured_stamp is not None else 0.0),
-            "/left/joint_states",
-            self._fresh_measured(now),
-        )
-        result = self.solver.solve(request, self.solver.last, measured)
+        # The hardware-side adapter independently checks fresh measured robot
+        # state immediately before publishing.  Repeating that asynchronous
+        # timing gate here caused false stale-state faults under normal ROS
+        # callback scheduling, while adding no protection at the output gate.
+        result = self.solver.solve(request, self.solver.last, None)
         result = replace(result, computed_stamp=self._stamp(time.monotonic()))
         if result.success:
             self.last_command = result.command
             self.reason = "following left controller; second Y returns home"
         else:
             self._fault(f"IK stopped: {result.reason.value}")
+            # Do not latch the hardware adapter for a source-side IK stop.  Its
+            # watchdog stops new motion, and a subsequent Y can re-anchor at
+            # measured q and execute the bounded return above.
+            return ControlUpdate(self.state, self.reason)
         return ControlUpdate(self.state, self.reason, result)
 
     def tick(self, now: float) -> ControlUpdate:
