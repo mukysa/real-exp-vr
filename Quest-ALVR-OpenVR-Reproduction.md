@@ -124,10 +124,10 @@ IP 可能随网络变化；应以 ALVR Dashboard 当前显示为准。
 
 ```bash
 ./scripts/record_meta_quest_openvr.sh \
-  --output recordings/quest_raw/stage8-openvr-guided-20261020.jsonl
+  --output recordings/quest_raw/<new-recording-name>.jsonl
 ```
 
-如果该文件已经存在，下一轮只需把命令中的 `stage8` 改成 `stage9` 等新名称。
+每次录制必须使用新的文件名；录制器不会覆盖已有 JSONL。
 
 正常启动过程应包含：
 

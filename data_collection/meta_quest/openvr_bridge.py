@@ -29,6 +29,9 @@ from .steamvr_bridge import (
     compact_controller_line,
 )
 
+# SteamVR Touch legacy bindings map left X and right A to the A button bit.
+BUTTON_X = BUTTON_A
+
 
 # OpenVR tracking space is right-handed: x right, y up, -z forward.  The
 # existing raw-input contract is Unity-like: x right, y up, +z forward.
@@ -132,7 +135,7 @@ def _load_openvr() -> Any:
     return openvr
 
 
-def _controller_controls(system: Any, controller_id: int) -> tuple[float, bool, bool]:
+def _controller_controls(system: Any, controller_id: int, *, single_left: bool = False) -> tuple[float, bool, bool]:
     ok, state = system.getControllerState(controller_id)
     if not ok:
         return 0.0, False, False
@@ -142,7 +145,7 @@ def _controller_controls(system: Any, controller_id: int) -> tuple[float, bool, 
     except (AttributeError, IndexError, TypeError):
         trigger = 1.0 if mask & BUTTON_TRIGGER else 0.0
     trigger = min(1.0, max(0.0, trigger))
-    return trigger, bool(mask & BUTTON_B), bool(mask & BUTTON_A)
+    return trigger, bool(mask & (BUTTON_X if single_left else BUTTON_B)), bool(mask & BUTTON_A)
 
 
 def _wait_for_alvr(session_path: Path) -> None:
@@ -190,6 +193,7 @@ def run_bridge(args: argparse.Namespace) -> None:
             report_start = time.monotonic()
             next_poll = report_start
             last_ids: dict[str, int] = {}
+            last_clutch: dict[str, bool] = {}
             while True:
                 if not args.no_alvr_wait and not alvr_is_streaming(session_path):
                     print(
@@ -214,7 +218,14 @@ def run_bridge(args: argparse.Namespace) -> None:
                     if not tracked.bDeviceIsConnected or not tracked.bPoseIsValid:
                         continue
                     pose = openvr_matrix_to_unity_pose(tracked.mDeviceToAbsoluteTracking.m)
-                    grasp, clutch, record = _controller_controls(system, controller_id)
+                    if args.single_left and side != "left":
+                        continue
+                    grasp, clutch, record = _controller_controls(
+                        system, controller_id, single_left=args.single_left
+                    )
+                    if args.single_left and last_clutch.get(side) != clutch:
+                        print(f"Left X clutch={'pressed' if clutch else 'released'}", flush=True)
+                        last_clutch[side] = clutch
                     line = compact_controller_line(
                         side=side,
                         pose=pose,
@@ -256,12 +267,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--side", choices=("both", "left", "right"), default="both")
+    parser.add_argument("--single-left", action="store_true", help="left controller only; use X as clutch")
     parser.add_argument("--poll-hz", type=float, default=30.0)
     parser.add_argument("--report-interval-s", type=float, default=5.0)
     parser.add_argument("--alvr-session", default="~/.config/alvr/session.json")
     parser.add_argument("--no-alvr-wait", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
+    if args.single_left:
+        args.side = "left"
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
     if args.poll_hz <= 0.0:

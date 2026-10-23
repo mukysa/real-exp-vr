@@ -2,6 +2,10 @@
 
 This repository groups the code and notes used for real-world Franka FR3 experiments with GELLO and Meta Quest teleoperation, LeRobot dataset collection, and training workflows.
 
+## Current VR / IK work
+
+Start with [A线-当前状态与下一步.md](A线-当前状态与下一步.md) for the current dual-arm IK status. The latest offline review, test evidence, and blockers are in [docs/A-Line-Offline-Feasibility-Review-20261023.md](docs/A-Line-Offline-Feasibility-Review-20261023.md). Historical plans and completed validation reports are indexed in [z_histroy_plan/README.md](z_histroy_plan/README.md).
+
 ## Repository Layout
 
 - `data_collection/`: scripts and documentation for recording, replaying, and editing local LeRobot datasets.
@@ -30,6 +34,7 @@ This repo uses two different Python environments:
 
 - Use the system ROS 2 / Franka environment for `gello_software`, ROS 2 launch files, and `data_collection/replay_lerobot_episode.py`.
 - Use the `lerobot` Conda environment for `data_collection/lerobot_collection.py`, dataset inspection, dataset editing, and training under `lerobot/`.
+- Use the environment loaded by `scripts/validate_fr3_ik_offline.sh` for FR3 IK. The checked-in `ms3-enviroment.yaml` is a snapshot from another host; client currently has no installed `ms3` Conda environment.
 
 ## Common Workflows
 
@@ -46,11 +51,10 @@ and Wuji processes use the `lerobot` Conda environment automatically without
 changing the calling shell. Set `LEROBOT_CONDA_ENV`, `WUJI_CONDA_ENV`, or
 `DEPLOYMENT_CONDA_ENV` to select a differently named environment.
 - [`scripts/start_data_collection_client.sh`](scripts/start_data_collection_client.sh): start control-host GELLO/Franka teleoperation for split collection.
-- [`data_collection/wuji/`](data_collection/wuji/): Python Wuji-glove teleoperation publisher with FR3/GELLO-compatible ROS topics.
 - [`scripts/start_data_collection_server.sh`](scripts/start_data_collection_server.sh): start the data-server RealSense publishers, ROS bridge, and optional recorder.
 - [`scripts/replay.sh`](scripts/replay.sh): start the dual-arm FR3 replay controllers and Franka-hand managers, then replay a recorded LeRobot episode.
 
-### Meta Quest input status (client, 2026-10-20)
+### Meta Quest input and offline IK status (client, 2026-10-23)
 
 The supported live input path is Quest Touch controllers through ALVR/SteamVR
 and the direct OpenVR bridge into the existing lossless JSONL recorder. The
@@ -72,7 +76,7 @@ completion summary and atomically publishes the final JSONL. Use a new filename
 after stage 8 exists. The full startup, validation, and shutdown procedure is
 maintained only in
 [Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md).
-See [VR-import.md](VR-import.md) for current progress and
+Dual-arm offline IK and the read-only preview are implemented. The selected A-line suite passes 109 tests in the project ROS/Franka environment, but the result remains diagnostic and has not been jointly validated through the ROS adapter and fake controller. See [A线-当前状态与下一步.md](A线-当前状态与下一步.md) for current progress and
 [data_collection/meta_quest/README.md](data_collection/meta_quest/README.md) for
 the protocol and safety boundary.
 

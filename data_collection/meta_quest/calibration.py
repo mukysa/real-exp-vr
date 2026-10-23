@@ -100,14 +100,29 @@ class PoseCalibration:
 
     source_anchor: RigidPose
     target_anchor: RigidPose
+    motion_mapping: str = "local-relative"
+
+    def __post_init__(self) -> None:
+        if self.motion_mapping not in {"local-relative", "spatial-relative"}:
+            raise ValueError("Unknown relative motion mapping")
 
     @classmethod
-    def from_anchor(cls, source_anchor: RigidPose, target_anchor: RigidPose) -> "PoseCalibration":
-        return cls(source_anchor=source_anchor, target_anchor=target_anchor)
+    def from_anchor(cls, source_anchor: RigidPose, target_anchor: RigidPose,
+                    *, motion_mapping: str = "local-relative") -> "PoseCalibration":
+        return cls(source_anchor=source_anchor, target_anchor=target_anchor,
+                   motion_mapping=motion_mapping)
 
     def apply(self, source_pose: RigidPose) -> RigidPose:
         """Map source motion relative to the calibration anchor to the target frame."""
 
+        if self.motion_mapping == "spatial-relative":
+            # Source and target already share declared axes. Grip orientation
+            # must not rotate translation, nor conjugate spatial wrist turns.
+            delta_rotation = quaternion_multiply(source_pose.quaternion_xyzw,
+                quaternion_inverse(self.source_anchor.quaternion_xyzw))
+            return RigidPose(tuple(self.target_anchor.position[i] + source_pose.position[i]
+                                   - self.source_anchor.position[i] for i in range(3)),
+                quaternion_multiply(delta_rotation, self.target_anchor.quaternion_xyzw))
         relative_motion = compose(inverse(self.source_anchor), source_pose)
         return compose(self.target_anchor, relative_motion)
 

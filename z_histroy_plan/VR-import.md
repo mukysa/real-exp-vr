@@ -1,3 +1,5 @@
+> 历史归档：2026-10-21。本文保留原记录的时间语境，不作为当前进度或启动指令。最新工作入口见 [A 线当前状态与下一步](../A线-当前状态与下一步.md)；代码块中的项目相对路径仍以项目根目录为基准。
+
 # Quest 硬件接入交接与当前进度
 
 更新日期：2026-10-20。
@@ -17,7 +19,7 @@ Quest Touch
   → lossless JSONL
 ```
 
-完整逐命令操作只维护在 [Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md)。不要再按历史 Hand Tracking Streamer/ADB 或 SAPIEN bridge 教程启动。
+完整逐命令操作只维护在 [Quest-ALVR-OpenVR-Reproduction.md](../Quest-ALVR-OpenVR-Reproduction.md)。不要再按历史 Hand Tracking Streamer/ADB 或 SAPIEN bridge 教程启动。
 
 当前已完成输入、坐标映射、相对锚定、离线目标预览和安全状态机。下一步是 P2 FR3 离线 IK、隔离 topic 和 fake hardware；尚未启动或控制真实机器人。
 
@@ -40,14 +42,14 @@ unset PYTHONPATH PYTHONHOME
 
 | 文件 | 当前职责 |
 |---|---|
-| [Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md) | 唯一现场操作手册 |
-| [Meta Quest README](data_collection/meta_quest/README.md) | 当前协议、坐标和安全边界 |
-| [openvr_bridge.py](data_collection/meta_quest/openvr_bridge.py) | 读取 OpenVR 双手柄并输出既有 TCP 协议 |
-| [record_meta_quest_openvr.sh](scripts/record_meta_quest_openvr.sh) | 一键启动 bridge 与 raw recorder，安全处理 `Ctrl+C` |
-| [raw_recorder.py](data_collection/meta_quest/raw_recorder.py) | `.partial` 写入、completion summary 和原子改名 |
-| [target_preview.py](data_collection/meta_quest/target_preview.py) | 离线坐标转换和目标轨迹预览 |
-| [state_machine.py](data_collection/meta_quest/state_machine.py) | 离线接管/保持状态机 |
-| [safety.py](data_collection/meta_quest/safety.py) | stale、断流、跳变、速度和工作空间检查 |
+| [Quest-ALVR-OpenVR-Reproduction.md](../Quest-ALVR-OpenVR-Reproduction.md) | 唯一现场操作手册 |
+| [Meta Quest README](../data_collection/meta_quest/README.md) | 当前协议、坐标和安全边界 |
+| [openvr_bridge.py](../data_collection/meta_quest/openvr_bridge.py) | 读取 OpenVR 双手柄并输出既有 TCP 协议 |
+| [record_meta_quest_openvr.sh](../scripts/record_meta_quest_openvr.sh) | 一键启动 bridge 与 raw recorder，安全处理 `Ctrl+C` |
+| [raw_recorder.py](../data_collection/meta_quest/raw_recorder.py) | `.partial` 写入、completion summary 和原子改名 |
+| [target_preview.py](../data_collection/meta_quest/target_preview.py) | 离线坐标转换和目标轨迹预览 |
+| [state_machine.py](../data_collection/meta_quest/state_machine.py) | 离线接管/保持状态机 |
+| [safety.py](../data_collection/meta_quest/safety.py) | stale、断流、跳变、速度和工作空间检查 |
 
 ## 最新实测证据
 

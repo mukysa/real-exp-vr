@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections import Counter
-from enum import StrEnum
+from enum import Enum
 import math
 
-from .calibration import PoseCalibration, RigidPose
+from .calibration import PoseCalibration, RigidPose, compose
 from .coordinates import IDENTITY_POSE, unity_to_robot_pose
 from .models import TargetPose
 from .receiver import ReceivedPose
@@ -18,12 +18,16 @@ from .safety import (
 )
 
 
-class TeleoperationState(StrEnum):
+class TeleoperationState(str, Enum):
     WAIT_INPUT = "WAIT_INPUT"
     READY = "READY"
     FOLLOWING = "FOLLOWING"
     MANUAL_HOLD = "MANUAL_HOLD"
     FAULT_HOLD = "FAULT_HOLD"
+
+    def __str__(self) -> str:
+        # Preserve StrEnum's string behavior on the ROS Humble Python 3.10 runtime.
+        return self.value
 
 
 class DebouncedButtonEdge:
@@ -73,9 +77,11 @@ class TeleoperationStateMachine:
         frame_id: str = "right_teleop_preview",
         position_scale: float = 1.0,
         controller_to_tool: RigidPose = IDENTITY_POSE,
+        source_to_target_frame: RigidPose = IDENTITY_POSE,
         limits: SafetyLimits | None = None,
         min_ready_samples: int = 3,
         button_debounce_s: float = 0.15,
+        motion_mapping: str = "local-relative",
     ) -> None:
         if side not in {"left", "right"}:
             raise ValueError("side must be left or right")
@@ -87,12 +93,16 @@ class TeleoperationStateMachine:
             raise ValueError("position_scale must be positive and finite")
         if min_ready_samples < 1:
             raise ValueError("min_ready_samples must be positive")
+        if motion_mapping not in {"local-relative", "spatial-relative"}:
+            raise ValueError("Unknown relative motion mapping")
         self.target_anchor = target_anchor
         self.side = side
         self.engage_button = engage_button
         self.frame_id = frame_id
         self.position_scale = position_scale
         self.controller_to_tool = controller_to_tool
+        self.source_to_target_frame = source_to_target_frame
+        self.motion_mapping = motion_mapping
         self.limits = limits or SafetyLimits()
         self.min_ready_samples = min_ready_samples
         self.button = DebouncedButtonEdge(button_debounce_s)
@@ -156,7 +166,8 @@ class TeleoperationStateMachine:
         self.button.require_release()
 
     def _start_following(self, received: ReceivedPose, source_pose: RigidPose) -> TargetPose:
-        self._calibration = PoseCalibration.from_anchor(source_pose, self._last_safe_target)
+        self._calibration = PoseCalibration.from_anchor(source_pose, self._last_safe_target,
+                                                       motion_mapping=self.motion_mapping)
         self.state = TeleoperationState.FOLLOWING
         self._fault_reason = None
         self._healthy_samples = 0
@@ -164,15 +175,43 @@ class TeleoperationStateMachine:
         self.anchor_sequences.append(received.sequence)
         return self._target(received, valid=True, state=self.state)
 
-    def update(self, received: ReceivedPose) -> TargetPose | None:
+    @property
+    def ready_for_external_engage(self) -> bool:
+        """Whether a coordinator may request a fresh, explicit reanchor."""
+        return (
+            self.state in {TeleoperationState.READY, TeleoperationState.MANUAL_HOLD}
+            or (
+                self.state == TeleoperationState.FAULT_HOLD
+                and self._healthy_samples >= self.min_ready_samples
+            )
+        )
+
+    def suspend(self, safe_pose: RigidPose, reason: str, *, fault: bool) -> None:
+        """Hold an accepted FK pose when an external coordinator stops this arm."""
+        self._last_safe_target = safe_pose
+        self._calibration = None
+        self._last_target_time = None
+        if fault:
+            self._enter_fault(reason)
+        else:
+            self.state = TeleoperationState.MANUAL_HOLD
+            self._fault_reason = None
+
+    def update(self, received: ReceivedPose, *, engage_edge: bool | None = None) -> TargetPose | None:
+        """Use the local button unless a coordinator supplies an explicit edge.
+
+        An external False suppresses the local button; True requests the same
+        toggle/reanchor transition. Input health checks still run first.
+        """
         sample = received.sample
         if sample.source != "controller" or sample.side != self.side:
             return None
-        source_pose = unity_to_robot_pose(
+        converted_pose = unity_to_robot_pose(
             RigidPose(sample.position, sample.quaternion_xyzw),
             position_scale=self.position_scale,
             controller_to_tool=self.controller_to_tool,
         )
+        source_pose = compose(self.source_to_target_frame, converted_pose)
         pressed = self._button_pressed(received)
         if self._connection_id is None:
             self._connection_id = received.connection_id
@@ -218,7 +257,8 @@ class TeleoperationStateMachine:
         self._last_receive_time = received.received_monotonic_s
         self._last_source_pose = source_pose
         self._last_received = received
-        edge = self.button.update(pressed, received.received_monotonic_s)
+        local_edge = self.button.update(pressed, received.received_monotonic_s)
+        edge = local_edge if engage_edge is None else engage_edge
 
         if self.state == TeleoperationState.WAIT_INPUT:
             self._healthy_samples += 1

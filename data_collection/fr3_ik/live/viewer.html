@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>双臂实时预览</title>
+<style>body{margin:24px;background:#0d1726;color:#e5edf5;font:16px system-ui}h1{font-size:24px}p{color:#b7c7d8}select{padding:8px;background:#203149;color:white}canvas{width:100%;height:60vh;background:#101f32;border-radius:12px}#status{padding:14px;background:#24364d;margin:12px 0;font-weight:bold}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:10px;border-bottom:1px solid #34465b}#events{white-space:pre-wrap;color:#aabbd0}small{color:#aabbd0}</style>
+<h1 id="title">实时预览 · 仅虚拟运动</h1><p id="source">正在连接页面服务…</p>
+<select id="view"><option value="right-rear">右后方（现场视角）</option><option value="rear">正后方</option><option value="top">俯视</option></select>
+<span id="legend">　青色 left / .3　橙色 right / .2　粗虚线：实测　细实线：虚拟</span>
+<div id="status">等待服务</div><canvas id="robot"></canvas>
+<p id="instructions">等待服务返回当前模式与按键说明…</p>
+<table><thead><tr><th>机械臂</th><th>反馈 / Quest 数据年龄</th><th>实测→虚拟 TCP 距离</th><th>虚拟关节角 rad</th></tr></thead><tbody id="arms"></tbody></table>
+<p><small>+X 向工作区前方，+Y 向左，+Z 向上。沿用 V4 方向，不自动补偿跟踪空间偏航。网页没有真机运动接口。</small></p><pre id="events"></pre><script src="/viewer.js"></script></html>

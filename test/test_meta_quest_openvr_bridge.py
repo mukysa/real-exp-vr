@@ -52,6 +52,25 @@ def test_controller_controls_maps_trigger_and_stage2_buttons() -> None:
     assert record is True
 
 
+def test_single_left_maps_x_to_clutch_and_keeps_dual_b_mapping() -> None:
+    state = SimpleNamespace(
+        # SteamVR Touch legacy: left X -> left_a_press (id 7).
+        ulButtonPressed=(1 << 7),
+        rAxis=[SimpleNamespace(x=0.0), SimpleNamespace(x=0.0)],
+    )
+    system = SimpleNamespace(getControllerState=lambda _: (True, state))
+    assert _controller_controls(system, 1, single_left=True)[1] is True
+    assert _controller_controls(system, 1, single_left=False)[1] is False
+    assert parse_args(["--single-left"]).side == "left"
+
+
+@pytest.mark.parametrize('mask', [0, 1 << 1, 1 << 3, 1 << 2])
+def test_single_left_other_buttons_do_not_engage(mask: int) -> None:
+    state = SimpleNamespace(ulButtonPressed=mask, rAxis=[])
+    system = SimpleNamespace(getControllerState=lambda _: (True, state))
+    assert _controller_controls(system, 1, single_left=True)[1] is False
+
+
 def test_openvr_cli_validates_rates() -> None:
     assert parse_args(["--poll-hz", "60"]).poll_hz == 60.0
     with pytest.raises(SystemExit):

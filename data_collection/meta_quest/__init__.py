@@ -7,7 +7,7 @@ from .calibration import (
     PoseCalibrator,
     RigidPose,
 )
-from .models import TargetPose
+from .models import IKResult, TargetPose
 from .safety import SafetyLimits
 from .state_machine import TeleoperationState, TeleoperationStateMachine
 from .coordinates import (
@@ -28,6 +28,7 @@ __all__ = [
     "ReceivedPose",
     "ReceiverSnapshot",
     "RigidPose",
+    "IKResult",
     "TargetPose",
     "SafetyLimits",
     "TeleoperationState",

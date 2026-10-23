@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>双手原始运动对照</title><style>body{background:#101b2c;color:#e3edf6;font:16px system-ui;margin:30px}canvas{width:100%;height:220px;background:#17263b;margin:8px 0}a{color:#64dbc8}</style><h1>双手原始运动 · 固定方向对照</h1><p>相对各自首帧。横轴时间，纵轴位移（米）；右手橙色，左手青色。左右横向运动应镜像，前后及上下应大致一致。这里只显示手柄运动，不代表左机械臂 IK。</p><a href="report.html">打开新版右臂 IK 回放</a><div id="plots"></div><script>
+const D=/*DATA*/;
+for(const [title,axis] of [['前后：+X 向前',0],['左右：+Y 向左（双手应镜像）',1],['上下：+Z 向上',2],['扳机：1 为按下',3]]){
+ const heading=document.createElement('h3');heading.textContent=title;document.getElementById('plots').append(heading);const canvas=document.createElement('canvas');canvas.width=1300;canvas.height=220;document.getElementById('plots').append(canvas);const c=canvas.getContext('2d');
+ const vals=Object.values(D).flatMap(a=>a.map(p=>axis===3?p.grasp:p.delta[axis]));const lo=Math.min(0,...vals),hi=Math.max(.01,...vals),end=Math.max(...Object.values(D).flatMap(a=>a.map(p=>p.t)));const x=t=>60+t/end*1200,y=v=>190-(v-lo)/(hi-lo)*160;
+ c.font='14px system-ui';for(let i=0;i<5;i++){let v=lo+(hi-lo)*i/4;c.strokeStyle='#354961';c.beginPath();c.moveTo(60,y(v));c.lineTo(1260,y(v));c.stroke();c.fillStyle='#c2d2e7';c.fillText(v.toFixed(3),0,y(v)+4);c.fillText((end*i/4).toFixed(1)+'s',x(end*i/4),215);}
+ for(const [side,color]of [['right','#f9ba55'],['left','#4adacb']]){c.strokeStyle=color;c.lineWidth=2;c.beginPath();(D[side]||[]).forEach((p,i)=>{const v=axis===3?p.grasp:p.delta[axis];if(i)c.lineTo(x(p.t),y(v));else c.moveTo(x(p.t),y(v));});c.stroke();}
+}
+</script>

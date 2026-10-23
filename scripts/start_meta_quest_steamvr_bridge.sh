@@ -21,22 +21,39 @@ if [[ ! -d "${sapien_site_packages}/sapien" ]]; then
   exit 1
 fi
 
-# SAPIEN's OpenVR backend needs the active desktop session. Interactive
-# terminals already inherit these variables; SSH/nohup launches do not.
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export DISPLAY="${DISPLAY:-:0}"
-if [[ -z "${XAUTHORITY:-}" ]]; then
+# OpenVR must use the server desktop, never SSH's localhost:10.x X11 proxy.
+# Overrides affect this child process only; no desktop/system configuration changes.
+export XDG_RUNTIME_DIR="${STEAMVR_XDG_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
+if [[ -n "${STEAMVR_DISPLAY:-}" ]]; then
+  export DISPLAY="${STEAMVR_DISPLAY}"
+elif [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" || "${DISPLAY:-}" == localhost:* || "${DISPLAY:-}" == 127.0.0.1:* ]]; then
+  export DISPLAY=:0
+  # The forwarded authority inherited over SSH belongs to MoTTY, not GNOME.
+  unset XAUTHORITY
+else
+  export DISPLAY="${DISPLAY:-:0}"
+fi
+if [[ -n "${STEAMVR_XAUTHORITY:-}" ]]; then
+  export XAUTHORITY="${STEAMVR_XAUTHORITY}"
+elif [[ -z "${XAUTHORITY:-}" ]]; then
   shopt -s nullglob
   xauthority_candidates=("${XDG_RUNTIME_DIR}"/.mutter-Xwaylandauth.*)
   shopt -u nullglob
   if (( ${#xauthority_candidates[@]} == 1 )); then
     export XAUTHORITY="${xauthority_candidates[0]}"
+  elif [[ -r "${HOME}/.Xauthority" ]]; then
+    export XAUTHORITY="${HOME}/.Xauthority"
   else
-    echo "Error: could not identify the desktop XAUTHORITY file." >&2
-    echo "Set XAUTHORITY explicitly before starting the SteamVR bridge." >&2
+    echo "Error: could not identify the server desktop XAUTHORITY file." >&2
+    echo "Set STEAMVR_DISPLAY and STEAMVR_XAUTHORITY from the server desktop terminal." >&2
     exit 1
   fi
 fi
+if [[ ! -r "${XAUTHORITY}" ]]; then
+  echo "Error: desktop XAUTHORITY is not readable: ${XAUTHORITY}" >&2
+  exit 1
+fi
+echo "SteamVR desktop: DISPLAY=${DISPLAY} XAUTHORITY=${XAUTHORITY}"
 
 unset PYTHONHOME
 export PYTHONPATH="${repository_root}:${sapien_site_packages}"

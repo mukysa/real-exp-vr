@@ -90,6 +90,46 @@ def test_toggle_follow_hold_and_reanchor_without_jump() -> None:
     assert machine.anchor_sequences == [3, 8]
 
 
+def test_external_shared_edge_toggles_arm_and_suspends_at_last_safe_pose() -> None:
+    machine, sequence, timestamp = _ready_machine()
+    engaged = machine.update(
+        _received(sequence, timestamp, clutch=False), engage_edge=True
+    )
+    moved = machine.update(
+        _received(sequence + 1, timestamp + 0.02, clutch=False, position=(0.02, 0.0, 0.0)),
+        engage_edge=False,
+    )
+
+    machine.suspend(moved.pose, "shared_manual_hold", fault=False)
+    held = machine.update(
+        _received(sequence + 2, timestamp + 0.04, clutch=False, position=(0.5, 0.0, 0.0)),
+        engage_edge=False,
+    )
+
+    assert engaged.valid and moved.valid
+    assert held.valid is False
+    assert held.state == "MANUAL_HOLD"
+    assert held.pose == moved.pose
+    assert machine.ready_for_external_engage
+    resumed = machine.update(
+        _received(sequence + 3, timestamp + 0.06, clutch=False, position=(0.5, 0.0, 0.0)),
+        engage_edge=True,
+    )
+    assert resumed.valid
+    assert resumed.pose == moved.pose
+
+
+def test_source_pose_can_be_mapped_into_calibrated_world_frame() -> None:
+    transform = RigidPose((0.2, -0.1, 0.3), (0.0, 0.0, 0.0, 1.0))
+    machine, sequence, timestamp = _ready_machine(source_to_target_frame=transform)
+    anchored = machine.update(_received(sequence, timestamp, clutch=True))
+    moved = machine.update(_received(sequence + 1, timestamp + 0.04, clutch=True, position=(0.0, 0.0, 0.01)))
+
+    assert anchored.pose == TARGET_ANCHOR
+    assert moved.valid
+    assert moved.pose.position == pytest.approx((TARGET_ANCHOR.position[0] + 0.01, TARGET_ANCHOR.position[1], TARGET_ANCHOR.position[2]))
+
+
 def test_button_held_at_start_requires_release_before_engage() -> None:
     machine = TeleoperationStateMachine(TARGET_ANCHOR, min_ready_samples=2)
 
