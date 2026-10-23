@@ -143,6 +143,11 @@ start_process impedance "${controller_spawner}" joint_impedance_controller \
   --param-file "${controller_yaml}" \
   --param-file "${vr_yaml}"
 impedance_pid="${children[${#children[@]}-1]}"
+if ! wait "${impedance_pid}"; then
+  echo "Error: impedance controller spawner failed." >&2
+  tail -20 "${log_dir}/impedance.log" >&2 || true
+  exit 1
+fi
 deadline=$((SECONDS + 30))
 while ((SECONDS < deadline)); do
   kill -0 "${hardware_pid}" 2>/dev/null || {
@@ -151,13 +156,6 @@ while ((SECONDS < deadline)); do
   }
   if timeout 3s ros2 control list_controllers -c /left/controller_manager 2>/dev/null \
       | grep -Eq '^joint_impedance_controller[[:space:]].*active'; then break; fi
-  if ! kill -0 "${impedance_pid}" 2>/dev/null; then
-    if timeout 3s ros2 control list_controllers -c /left/controller_manager 2>/dev/null \
-        | grep -Eq '^joint_impedance_controller[[:space:]].*active'; then break; fi
-    echo "Error: impedance controller spawner exited before activation." >&2
-    tail -20 "${log_dir}/impedance.log" >&2 || true
-    exit 1
-  fi
   sleep 0.5
 done
 timeout 3s ros2 control list_controllers -c /left/controller_manager \
