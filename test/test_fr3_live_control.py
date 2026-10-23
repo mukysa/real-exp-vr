@@ -66,25 +66,25 @@ def test_scaled_workspace_is_hard_capped_at_five_mm() -> None:
     assert "5 mm" in core.reason
 
 
-def test_half_scale_workspace_is_hard_capped_at_two_hundred_mm() -> None:
+def test_half_scale_workspace_is_hard_capped_at_three_hundred_mm() -> None:
     core = LeftLiveControl(
         Kinematics("left"),
         clock_id="test",
         position_scale=0.5,
-        max_tcp_offset_m=0.20,
+        max_tcp_offset_m=0.30,
     )
     ready(core)
     core.update_measured(Q, (0.0,) * 7, 1.20)
     core.process(sample(4, 1.20, y=True))
     # Model a continuous approach to the boundary without asking the IK solver
     # to track the intermediate points in this workspace-limit unit test.
-    core.last_source = converted_matrix(sample(5, 1.24, x=0.30).sample)
+    core.last_source = converted_matrix(sample(5, 1.24, x=0.50).sample)
     core.last_pose_stamp = 1.24
     core.update_measured(Q, (0.0,) * 7, 1.28)
-    update = core.process(sample(6, 1.28, x=0.41))
+    update = core.process(sample(6, 1.28, x=0.61))
     assert update.result is None
     assert core.state == "FAULT"
-    assert "200 mm" in core.reason
+    assert "300 mm" in core.reason
 
 
 def test_newer_measured_callback_does_not_false_trip_stale_feedback() -> None:
