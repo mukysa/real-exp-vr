@@ -61,8 +61,8 @@ class LeftLiveControl:
             raise ValueError("clock_id is required")
         if not 0.0 < position_scale <= 1.0:
             raise ValueError("position_scale must be in (0, 1]")
-        if not 0.0 < max_tcp_offset_m <= 0.02:
-            raise ValueError("max_tcp_offset_m must be in (0, 0.02]")
+        if not 0.0 < max_tcp_offset_m <= 0.20:
+            raise ValueError("max_tcp_offset_m must be in (0, 0.20]")
         self.kin = kinematics
         self.clock_id = clock_id
         self.position_scale = float(position_scale)
