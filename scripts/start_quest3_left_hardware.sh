@@ -62,6 +62,12 @@ controller_spawner="$(ros2 pkg prefix controller_manager)/lib/controller_manager
 [[ "$(ros2 pkg prefix franka_vr_adapter)" == "${quest_install}"* ]]
 bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" --single-left --dry-run
 
+if [[ "${mode}" == "--enable-hardware" ]] && ! pgrep -x vrcompositor >/dev/null; then
+  echo "Error: SteamVR compositor is not running; controller buttons may update while poses remain frozen." >&2
+  echo "Start SteamVR from the client desktop, confirm vrcompositor is present, then reconnect ALVR Streaming." >&2
+  exit 1
+fi
+
 if [[ "${mode}" == "--check-only" ]]; then
   echo "CHECK OK: left-only configuration, Y button, strict IK source, adapter, and VR controller files are available."
   echo "No robot connection was opened."
