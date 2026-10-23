@@ -155,12 +155,17 @@ while ((SECONDS < deadline)); do
     exit 1
   }
   if timeout 3s ros2 control list_controllers -c /left/controller_manager 2>/dev/null \
-      | grep -Eq '^joint_impedance_controller[[:space:]].*active'; then break; fi
+      | grep -Eq 'joint_impedance_controller.*active'; then break; fi
   sleep 0.5
 done
-timeout 3s ros2 control list_controllers -c /left/controller_manager \
-  | grep -Eq '^joint_impedance_controller[[:space:]].*active' \
-  || { echo "Error: left impedance controller did not become active." >&2; exit 1; }
+controller_status="$(
+  timeout 3s ros2 control list_controllers -c /left/controller_manager 2>&1 || true
+)"
+grep -Eq 'joint_impedance_controller.*active' <<<"${controller_status}" || {
+  echo "Error: left impedance controller did not become active." >&2
+  printf '%s\n' "${controller_status}" >&2
+  exit 1
+}
 
 trace_path="${log_dir}/adapter.jsonl"
 start_process quest_control ros2 launch franka_vr_adapter left_live_control.launch.py \
