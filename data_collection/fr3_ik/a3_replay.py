@@ -194,6 +194,7 @@ class ArmReplay:
             self.safe_target = JointTarget(self.safe_target.joints, self.stamp(max(0.0, stamp.seconds-self.cadence)))
             self.solver.reset(self.safe_target, received.connection_id)
         result = self.solver.solve(request, self.safe_target, measured_joint_state=None)
+        self.last_result = result
         if result.success:
             self.safe_target = result.command
         elif self.solver.tracking_mode == 'dexarena_velocity':

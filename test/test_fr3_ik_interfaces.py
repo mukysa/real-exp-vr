@@ -8,6 +8,7 @@ import unittest
 from data_collection.fr3_ik.examples import contract_examples
 from data_collection.fr3_ik.interfaces import (
     ClockDomain, ConstraintChecks, JointVector, Timestamp,
+    ik_result_from_dict, ik_result_to_dict,
 )
 from data_collection.meta_quest.replay import load_recording
 from data_collection.meta_quest.state_machine import TeleoperationState
@@ -94,6 +95,21 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(result.request.target.source_sequence, 2)
         self.assertEqual(result.request.target.hold_reason, "connection_changed")
         self.assertEqual(result.request.source_stamp.clock_id, "example-host-session")
+
+    def test_result_json_round_trip_preserves_the_strict_contract(self):
+        for result in self.examples.values():
+            restored = ik_result_from_dict(ik_result_to_dict(result))
+            self.assertEqual(restored, result)
+
+    def test_result_json_rejects_unknown_schema_and_missing_timestamp(self):
+        payload = ik_result_to_dict(self.examples["following"])
+        payload["schema"] = "legacy_b_line_ik_result"
+        with self.assertRaises(ValueError):
+            ik_result_from_dict(payload)
+        payload = ik_result_to_dict(self.examples["following"])
+        del payload["computed_stamp"]
+        with self.assertRaises(KeyError):
+            ik_result_from_dict(payload)
 
     def test_stage7_fixture_is_lossless_and_not_modified(self):
         if not FIXTURE.exists():

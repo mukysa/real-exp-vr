@@ -166,7 +166,9 @@ instructions for those routes.
 
 ## Current safety boundary
 
-No current Meta Quest launcher starts GELLO, ROS control, Franka, MANUS,
-Sharpa, cameras, or the pair1 recorder. The next implementation stage is
-offline FR3 IK, followed by isolated topics and fake hardware before any
-operator-authorized real-robot test.
+The strict offline FR3 IK and pure-Python A/B gate are implemented. The
+standalone Quest ROS launcher starts only the adapter; it does not start GELLO,
+a robot controller, Franka, MANUS, Sharpa, cameras, or the pair1 recorder.
+The next gate is the dedicated 5 mm Quest capture plus a fresh read-only left
+arm snapshot, followed by the staged operator-authorized hardware checks in
+`docs/AB-Offline-Pipeline-20261023.md`. Fake hardware is not a release gate.

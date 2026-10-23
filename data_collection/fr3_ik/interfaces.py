@@ -9,6 +9,7 @@ from enum import Enum
 import math
 from typing import Protocol
 
+from data_collection.meta_quest.calibration import RigidPose
 from data_collection.meta_quest.models import TargetPose
 
 
@@ -167,10 +168,17 @@ class IKResult:
     position_residual_m: float | None = None
     rotation_residual_rad: float | None = None
     checks: ConstraintChecks = ConstraintChecks()
+    computed_stamp: Timestamp | None = None
 
     def __post_init__(self):
         require(isinstance(self.request, IKRequest) and isinstance(self.last_safe_target, JointTarget)
                 and isinstance(self.checks, ConstraintChecks), "Typed request, last safe target and checks required")
+        require(isinstance(self.computed_stamp, Timestamp), "Explicit computation timestamp required")
+        require((self.computed_stamp.domain, self.computed_stamp.clock_id) ==
+                (self.request.target_stamp.domain, self.request.target_stamp.clock_id),
+                "Computation and target timestamps must share a clock")
+        require(self.computed_stamp.seconds >= self.request.target_stamp.seconds,
+                "Computation timestamp cannot precede target generation")
         require(self.command is None or isinstance(self.command, JointTarget), "Invalid command type")
         require(isinstance(self.state, ResultState) and isinstance(self.reason, FailureReason),
                 "Explicit result state/reason required")
@@ -206,6 +214,109 @@ class IKResult:
         if not self.success or self.command is None:
             raise ValueError("No new command: adapter must handle HOLD/STOP/reanchor explicitly")
         return self.command
+
+
+def _timestamp_to_dict(stamp: Timestamp) -> dict:
+    return {"seconds": stamp.seconds, "domain": stamp.domain.value, "clock_id": stamp.clock_id}
+
+
+def _timestamp_from_dict(payload: dict) -> Timestamp:
+    return Timestamp(float(payload["seconds"]), ClockDomain(payload["domain"]), str(payload["clock_id"]))
+
+
+def ik_result_to_dict(result: IKResult) -> dict:
+    """Serialize the sole A/B IK contract without losing clock or state semantics."""
+    target = result.request.target
+    def joint_target(value: JointTarget | None):
+        if value is None:
+            return None
+        return {
+            "joint_names": list(value.joints.names),
+            "positions_rad": list(value.joints.positions_rad),
+            "stamp": _timestamp_to_dict(value.stamp),
+        }
+    return {
+        "schema": "fr3_ik_result_v1",
+        "request": {
+            "side": result.request.side,
+            "tool_frame": result.request.tool_frame,
+            "source_stamp": _timestamp_to_dict(result.request.source_stamp),
+            "target_stamp": _timestamp_to_dict(result.request.target_stamp),
+            "target": {
+                "position": list(target.pose.position),
+                "quaternion_xyzw": list(target.pose.quaternion_xyzw),
+                "frame_id": target.frame_id,
+                "source_sequence": target.source_sequence,
+                "source_connection_id": target.source_connection_id,
+                "generated_monotonic_s": target.generated_monotonic_s,
+                "state": target.state,
+                "valid": target.valid,
+                "hold_reason": target.hold_reason,
+            },
+        },
+        "state": result.state.value,
+        "reason": result.reason.value,
+        "detail": result.detail,
+        "command": joint_target(result.command),
+        "last_safe_target": joint_target(result.last_safe_target),
+        "solve_time_s": result.solve_time_s,
+        "position_residual_m": result.position_residual_m,
+        "rotation_residual_rad": result.rotation_residual_rad,
+        "checks": {
+            "residual": result.checks.residual,
+            "joint_limits": result.checks.joint_limits,
+            "step": result.checks.step,
+            "velocity": result.checks.velocity,
+            "acceleration": result.checks.acceleration,
+        },
+        "computed_stamp": _timestamp_to_dict(result.computed_stamp),
+    }
+
+
+def ik_result_from_dict(payload: dict) -> IKResult:
+    """Validate and deserialize an IK result received by the ROS adapter."""
+    require(payload.get("schema") == "fr3_ik_result_v1", "Unsupported IK result schema")
+    request_payload = payload["request"]
+    target_payload = request_payload["target"]
+    target = TargetPose(
+        RigidPose(tuple(target_payload["position"]), tuple(target_payload["quaternion_xyzw"])),
+        str(target_payload["frame_id"]),
+        int(target_payload["source_sequence"]),
+        int(target_payload["source_connection_id"]),
+        float(target_payload["generated_monotonic_s"]),
+        str(target_payload["state"]),
+        bool(target_payload["valid"]),
+        target_payload.get("hold_reason"),
+    )
+    request = IKRequest(
+        target,
+        _timestamp_from_dict(request_payload["source_stamp"]),
+        _timestamp_from_dict(request_payload["target_stamp"]),
+        str(request_payload["tool_frame"]),
+        str(request_payload["side"]),
+    )
+    def joint_target(value: dict | None) -> JointTarget | None:
+        if value is None:
+            return None
+        return JointTarget(
+            JointVector(tuple(value["positions_rad"]), tuple(value["joint_names"])),
+            _timestamp_from_dict(value["stamp"]),
+        )
+    return IKResult(
+        request=request,
+        state=ResultState(payload["state"]),
+        reason=FailureReason(payload["reason"]),
+        detail=str(payload["detail"]),
+        command=joint_target(payload.get("command")),
+        last_safe_target=joint_target(payload["last_safe_target"]),
+        solve_time_s=float(payload["solve_time_s"]),
+        position_residual_m=(None if payload.get("position_residual_m") is None
+                             else float(payload["position_residual_m"])),
+        rotation_residual_rad=(None if payload.get("rotation_residual_rad") is None
+                               else float(payload["rotation_residual_rad"])),
+        checks=ConstraintChecks(**payload["checks"]),
+        computed_stamp=_timestamp_from_dict(payload["computed_stamp"]),
+    )
 
 
 class IKSolver(Protocol):

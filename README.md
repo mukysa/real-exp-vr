@@ -76,7 +76,11 @@ completion summary and atomically publishes the final JSONL. Use a new filename
 after stage 8 exists. The full startup, validation, and shutdown procedure is
 maintained only in
 [Quest-ALVR-OpenVR-Reproduction.md](Quest-ALVR-OpenVR-Reproduction.md).
-Dual-arm offline IK and the read-only preview are implemented. The selected A-line suite passes 109 tests in the project ROS/Franka environment, but the result remains diagnostic and has not been jointly validated through the ROS adapter and fake controller. See [A线-当前状态与下一步.md](A线-当前状态与下一步.md) for current progress and
+Dual-arm offline IK, the sole strict A/B contract, the pure-Python command gate,
+and the real IK-result ROS adapter path are implemented. The current decision is
+still NO-GO until the dedicated 5 mm capture and fresh measured/accepted feedback
+are supplied; fake hardware is not a release condition. See
+[A/B offline report](docs/AB-Offline-Pipeline-20261023.md) and [A线-当前状态与下一步.md](A线-当前状态与下一步.md) for current progress and
 [data_collection/meta_quest/README.md](data_collection/meta_quest/README.md) for
 the protocol and safety boundary.
 

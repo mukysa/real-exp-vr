@@ -21,20 +21,21 @@ def contract_examples() -> dict[str, IKResult]:
     command = JointTarget(q, stamp)
     following = IKResult(request, ResultState.FOLLOWING, FailureReason.NONE,
                          "Synthetic stub: illustrative metrics, no IK performed", command, command,
-                         0.001, 0.0001, 0.0001, ConstraintChecks(True, True, True, True, True))
+                         0.001, 0.0001, 0.0001, ConstraintChecks(True, True, True, True, True), stamp)
     hold_request = replace(request, target=replace(target, state="MANUAL_HOLD", valid=False,
                                                   hold_reason="manual_hold"))
     hold = IKResult(hold_request, ResultState.HOLD, FailureReason.NONE,
-                    "Normal hold; do not advance reference", None, previous, 0)
+                    "Normal hold; do not advance reference", None, previous, 0,
+                    computed_stamp=stamp)
     failure = IKResult(request, ResultState.FAULT, FailureReason.UNREACHABLE,
                        "Synthetic unreachable result; require explicit recovery", None, previous,
-                       0.004, 0.2, 0.1, ConstraintChecks(residual=False))
+                       0.004, 0.2, 0.1, ConstraintChecks(residual=False), stamp)
     reconnect_request = replace(request, target=replace(target, source_connection_id=2,
                                 state="FAULT_HOLD", valid=False, hold_reason="connection_changed"))
     reconnect = IKResult(reconnect_request, ResultState.REANCHOR_REQUIRED,
                          FailureReason.CONNECTION_CHANGED,
                          "Discard pending targets; no automatic cross-connection recovery",
-                         None, previous, 0)
+                         None, previous, 0, computed_stamp=stamp)
     return {"following": following, "normal_hold": hold, "unreachable": failure,
             "reconnect": reconnect}
 

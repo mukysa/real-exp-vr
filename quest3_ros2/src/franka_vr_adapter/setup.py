@@ -20,14 +20,12 @@ setup(
     zip_safe=True,
     maintainer="Jianshu Hu",
     maintainer_email="jianshuhu123@gmail.com",
-    description="Safety-gated Quest 3 joint target adapter for the right FR3 arm.",
+    description="Safety-gated Quest 3 joint target adapter for one selected FR3 arm.",
     license="Apache-2.0",
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
             "adapter_node = franka_vr_adapter.adapter_node:main",
-            "closed_loop_runner = franka_vr_adapter.closed_loop_runner:main",
-            "fault_injection_runner = franka_vr_adapter.fault_injection_runner:main",
         ],
     },
 )

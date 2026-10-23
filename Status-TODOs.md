@@ -4,9 +4,9 @@
 
 ## 当前结论
 
-本轮暂停向后推进。A 线已完成 Quest/OpenVR 输入、离线安全状态机、FR3 模型/TCP 核对、双臂 IK、受限参考和只读预览。2026-10-23 在正确 ROS/Franka 环境中运行 109 项 A 线测试，全部通过。左臂 `--single-left` 入口只连接 left/.3，使用左手 X 接管；预览无机器人命令路径。
+本轮已继续完成 A/B 离线汇合。A 线严格 `IKResult` 现为唯一协议，B 线已提取为纯 Python `AdapterCore`，Quest ROS adapter 改为消费真实序列化 IK 结果，不再生成 synthetic target。18 类无硬件故障注入全部拒绝。详见 [A/B 离线报告](docs/AB-Offline-Pipeline-20261023.md)。
 
-离线代码可行不等于真机可行。最新输出仍为 `DIAGNOSTIC_ONLY`、`control_eligible=false`：A/B 接口、真实 measured/accepted feedback、严格残差、实时长尾、碰撞和真实停止行为尚未闭合。B 线 synthetic ROS/fake 历史验收不能替代真实 A 线 IK 联合验收，也没有授权真实运动。
+离线代码可行不等于真机可行。旧 V4/Stage12 输出仍为 `DIAGNOSTIC_ONLY`、`control_eligible=false`；它们不能进入新 adapter。新的正向 A/B 报告仍是 NO-GO，因为专用 5 mm 小动作数据、新鲜 measured/accepted feedback、严格残差、实时长尾、碰撞和真实停止行为尚未闭合。本轮没有启动 ROS/fake 或真机，也没有发布命令。
 
 重复仿真和 HTML 已清理，只保留 `outputs/fr3_ik/stage12-direction-audit-20261022/` 作为坐标、方向和诊断边界示例。原始录制继续保留。
 
@@ -88,10 +88,10 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
 - 原 GELLO 入口 `scripts/start_data_collection_client.sh` 和 `scripts/start_teleoperation.sh` 的现有参数、默认行为及启动顺序保持不变；VR 首期不在这两个入口中增加默认分支。
 - GELLO 命令与 accepted target 继续使用 `/{side}/gello/raw_joint_states` 和 `/{side}/gello/accepted_joint_states`，消息类型、七关节名称与顺序、弧度单位及控制器默认参数保持不变。
 - 历史 schema-v2 数据继续可读、可校验和可回放；动作仍来自控制器实际接受的目标，并保持 `q_target[t+1] - q_measured[t]` 语义。VR 原始位姿或未经控制器接受的 IK 输出不能代替 accepted target。
-- VR 使用独立命令源入口 `scripts/start_quest3_teleoperation_client.sh`。现有 B 线右臂 fake 框架已实现 `/right/vr/raw_joint_states` 与 `/right/vr/accepted_joint_states`；真实 IK 接入及双臂运行仍待完成，各臂将独立使用相应命名空间。
+- VR 使用独立命令源入口 `scripts/start_quest3_teleoperation_client.sh --side left|right`。adapter 已消费严格 IK result topic，并使用各臂独立的 raw/accepted 命名空间；该入口不启动机器人控制器或 GELLO。
 - GELLO 和 VR 启动入口必须互斥，同一机械臂同一时刻只允许一个命令源；首期不实现运行中热切换，也不以 topic remap 让两个发布者同时连接同一控制器输入。
 - VR 可以复用现有 FR3 关节阻抗控制器及安全检查，但任何新增配置必须保留 GELLO 默认值。若需给 launch 增加可选 command/accepted topic 参数，未传参时必须得到与当前 GELLO 完全相同的配置。
-- client 首先独立完成 `Quest 输入 -> 坐标/锚点/安全状态机 -> FR3 IK -> VR joint target -> controller accepted target`。在该链路完成离线、fake hardware 和用户安排的摇操验证前，不修改 server bridge、recorder、数据 schema 或 `dataset/test`。
+- client 首先独立完成 `Quest 输入 -> 坐标/锚点/安全状态机 -> FR3 IK -> AdapterCore -> VR joint target -> controller accepted target`。在离线正向验收和用户安排的分级真机验证前，不修改 server bridge、recorder、数据 schema 或 `dataset/test`。
 
 计划中的 client 结构为：
 
@@ -101,7 +101,7 @@ python data_collection/lerobot_collection.py --host 192.168.50.13 --port 5555 --
                   -> FR3 controller
                   -> /right/gello/accepted_joint_states
 
-新增 VR（双臂离线 IK 已实现；真实 IK 接入 ROS/fake 未联合验收）
+新增 VR（严格 IK 已接入独立 ROS adapter；client 构建和真机只读核对待完成）
   Quest -> ALVR/SteamVR -> OpenVR bridge -> receiver
         -> 坐标映射/相对锚定/安全状态机 -> FR3 IK
                  -> /right/vr/raw_joint_states
@@ -144,11 +144,14 @@ ALVR/OpenVR 的唯一操作手册为 [Quest-ALVR-OpenVR-Reproduction.md](Quest-A
 ### P2：FR3 控制适配
 
 - [x] 实现 FR3 离线 FK/IK、合成轨迹、双臂 Quest 回放和只读实时预览；V4/Stage12 方向基本获得现场认可。
-- [x] 实现 B 线右臂 VR topic、启动入口、gate/watchdog、互斥与合成输入 fake 验收，源码已同步。
+- [x] 统一 A/B 结果结构、状态和显式时钟；B 线只接受严格 A 线 `IKResult`。
+- [x] 提取纯 Python `AdapterCore`，覆盖 freshness、序号、左右臂、首帧、限位、速度、GELLO 冲突和故障锁存。
+- [x] Quest ROS 包改为真实 IK result topic 输入；移除 runtime synthetic source，保持与 GELLO 独立构建/启动。
 - [x] 完成离线接管首帧、受限参考、停止/重锚定和主要故障回归；保持诊断用途。
+- [x] 完成 18 类无硬件故障注入，全部 `would_publish=false`。
 - [ ] 解决严格残差、20 ms 周期长尾、奇异点和碰撞验收，不以放宽控制器限制掩盖问题。
-- [ ] 对齐 A/B 结果结构和状态语义，接入真实 IK、反馈与 freshness。
-- [ ] 扩展并完成双臂真实 IK → ROS/fake 联合验收。
+- [ ] 用户录制左手 5 mm 三轴小动作并补充新的左臂只读 snapshot，完成正向离线验收。
+- [ ] 在 client 构建 ROS package，并在真机第 1 级只读检查中核对 measured/accepted topic；不以 fake 作为放行条件。
 - [ ] 联合接入后回归 GELLO 启动、采集、历史数据读取与回放。
 
 验收：唯一明确命令源；目标连续；异常保持；旧 GELLO 工作流可用。离线诊断结果不作为硬件命令。
@@ -166,7 +169,7 @@ ALVR/OpenVR 的唯一操作手册为 [Quest-ALVR-OpenVR-Reproduction.md](Quest-A
 
 ### P4：VR 组合扩展（按需）
 
-- [ ] 完成双臂 ROS/fake 与真机联动；双臂离线 IK 与回放已实现。
+- [ ] 左臂分级真机通过后再扩展右臂和双臂；双臂离线 IK 与回放已实现。
 - [ ] 验证 Franka 夹爪与 Wuji glove/hand 组合。
 - [ ] 验证 GELLO/VR 数据 schema 的兼容性与混合训练前提。
 - [ ] 按需增加 DexArena 仿真对照验证。

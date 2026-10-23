@@ -3,10 +3,9 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/start_quest3_teleoperation_client.sh --fake
+Usage: scripts/start_quest3_teleoperation_client.sh --side left|right [--trace PATH]
 
-Starts the Quest 3 right-arm ROS stack with fake hardware only.
-The adapter's synthetic joint input remains disabled by default.
+Starts only the Quest 3 adapter. It does not launch a robot controller or GELLO.
 EOF
 }
 
@@ -19,10 +18,16 @@ if [[ "$#" -eq 1 && "$1" == "--help" ]]; then
   usage
   exit 0
 fi
-[[ "$#" -eq 1 && "$1" == "--fake" ]] || {
-  usage >&2
-  exit 2
-}
+side=""
+trace_path=""
+while (($#)); do
+  case "$1" in
+    --side) side="${2:-}"; shift 2 ;;
+    --trace) trace_path="${2:-}"; shift 2 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+[[ "${side}" == "left" || "${side}" == "right" ]] || die "--side must be left or right"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd -- "${script_dir}/.." && pwd)"
@@ -57,14 +62,13 @@ exec 9>"${launcher_lock_path}"
 flock -n 9 || die "another GELLO or Quest 3 arm teleoperation instance is already running"
 
 gello_topic_info="$(
-  ros2 topic info --no-daemon --spin-time 1 /right/gello/raw_joint_states 2>/dev/null || true
+  ros2 topic info --no-daemon --spin-time 1 "/${side}/gello/raw_joint_states" 2>/dev/null || true
 )"
 gello_publishers="$(awk '/Publisher count:/ {print $3}' <<<"${gello_topic_info}")"
 gello_publishers="${gello_publishers:-0}"
 [[ "${gello_publishers}" =~ ^[0-9]+$ ]] || die "could not parse GELLO publisher count"
 ((gello_publishers == 0)) || die \
-  "GELLO is already publishing /right/gello/raw_joint_states; stop it before Quest 3"
+  "GELLO is already publishing /${side}/gello/raw_joint_states; stop it before Quest 3"
 
-echo "Starting Quest 3 right-arm stack with fake hardware."
-echo "Synthetic input is disabled; the adapter will not publish joint targets."
-exec ros2 launch franka_vr_adapter right_fake.launch.py enable_synthetic_input:=false
+echo "Starting Quest 3 ${side}-arm adapter only; no controller is launched."
+exec ros2 launch franka_vr_adapter adapter.launch.py side:="${side}" trace_path:="${trace_path}"

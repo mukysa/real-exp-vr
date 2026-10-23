@@ -11,16 +11,11 @@ from pathlib import Path
 
 
 REQUIRED_EVENTS = {
-    "requested",
-    "requested_invalid",
     "decision",
     "raw",
     "accepted",
     "measured",
     "status",
-    "fault_mode",
-    "reanchor",
-    "initial_anchor",
 }
 
 

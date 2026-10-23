@@ -2,7 +2,7 @@
 
 更新日期：2026-10-23。项目：`/home/landau/real-exp-vr`。
 
-本文是 A 线唯一的当前状态入口。详细问题和本次测试证据见 [A 线离线可行性复核](docs/A-Line-Offline-Feasibility-Review-20261023.md)，历史过程见 [归档索引](z_histroy_plan/README.md)。
+本文是 A 线状态入口。原始可行性问题见 [A 线离线可行性复核](docs/A-Line-Offline-Feasibility-Review-20261023.md)，最新 A/B 汇合状态见 [A/B 离线报告](docs/AB-Offline-Pipeline-20261023.md)。
 
 ## 当前结论
 
@@ -21,10 +21,10 @@ Quest Touch
 离线方案可行，但当前输出不能进入真机控制：
 
 - 最新 V4/Stage12 仍为 `DIAGNOSTIC_ONLY`、`control_eligible=false`；
-- A/B 两套 `IKResult` 尚未统一；
+- A/B `IKResult` 已统一，纯 Python 门控和真实 ROS adapter 输入路径已完成；
 - 离线回放没有真实 measured/accepted feedback 闭环；
 - 严格残差、20 ms 长尾、碰撞和真实停止行为尚未通过；
-- 本轮不继续向 fake 或真机推进。
+- 专用小动作录制和新鲜 feedback 尚未提供，因此仍不进入真机运动。
 
 ## 已确认的约定
 
@@ -68,19 +68,18 @@ Quest Touch
 | 坐标、接管与故障保持 | 离线可用 | 通道、轴符号、首帧锚定和主要故障有测试 |
 | FR3 IK 与受限参考 | 诊断可用 | 关节约束通过，但残差和实时性没有达到控制门槛 |
 | 实时网页预览 | 可用 | mock 和只读反馈，无命令发布路径 |
-| A → B ROS adapter | 未完成 | 类型、时间、feedback、HOLD/FAULT 语义未闭合 |
-| fake 联合验收 | 未完成 | 历史 B 线 synthetic 通过，真实 A 线 IK 尚未接入 |
+| A → B ROS adapter | 离线完成 | 唯一接口、序列化、纯 Python 门控和真实 result topic 已接通；client ROS 构建待复核 |
+| 故障注入 | 通过 | 18 类异常全部 `would_publish=false`，不使用 fake hardware |
 | 真机运动 | 未开始 | 当前没有授权，也不具备完整门槛 |
 
 ## 主要问题
 
-1. A 线 `data_collection/fr3_ik/interfaces.py` 与 B 线 `data_collection/meta_quest/models.py` 各有一套 `IKResult`。
-2. A3 离线输出的 `measured_joint_state` 为 `null`，没有 controller accepted target 回灌。
-3. Stage11/12 的受限追赶存在严格残差失败，大动作滞后明显。
-4. 双臂 step 最大约 44.5 ms，出现超过 20 ms 的长尾。
-5. 当前约束不包括自碰撞、双臂互碰、桌面、夹爪和物体碰撞。
-6. OpenVR 的 device/frame 信息由主机轮询生成，不能单独证明设备新帧；A/B 时间域仍需显式转换。
-7. 腕部旋转、物理偏航、夹爪、episode 边界和真实停止都没有完成同等级验收。
+1. A3 离线旧输出的 `measured_joint_state` 为 `null`；新 A/B pipeline 只使用初始 snapshot，仍不能证明实时 freshness。
+2. Stage11/12 的受限追赶存在严格残差失败，大动作滞后明显。
+3. 双臂 step 最大约 44.5 ms，出现超过 20 ms 的长尾。
+4. 当前约束不包括自碰撞、双臂互碰、桌面、夹爪和物体碰撞。
+5. OpenVR 的 device/frame 信息由主机轮询生成，不能单独证明设备新帧。
+6. 腕部旋转、物理偏航、夹爪、episode 边界和真实停止都没有完成同等级验收。
 
 ## 代码入口
 
@@ -95,12 +94,12 @@ Quest Touch
 
 ## 恢复开发时的顺序
 
-本轮停在 Git 快照，不执行以下任务。以后恢复时按顺序处理：
+以后按顺序处理：
 
-1. 冻结 A/B joint、状态、时间戳和失败/HOLD 契约。
-2. 接入新鲜 measured state 与 controller accepted target。
-3. 明确控制周期、残差、停止、恢复和碰撞验收标准。
-4. 让真实 A 线 IK 进入隔离的左臂 fake，并覆盖断流/故障/退出。
-5. 完成 GELLO 回归后，再制定真机小范围试验。
+1. 用户录制左手 5 mm 三轴小动作并提供新的左臂只读 snapshot。
+2. 运行 A/B 离线 pipeline，满足严格残差、首帧和非法接受为 0 的标准。
+3. 在 client 构建独立 Quest ROS package，先做真机第 1 级只读 topic/控制器状态核对。
+4. 核对新鲜 measured state 与 controller accepted target，并补碰撞与停止验收。
+5. GELLO 回归通过后，再进行原位保持和预计算 2–5 mm 小动作。
 
 任何旧 HTML、synthetic/fake 报告或只读预览都不能替代上述门槛。

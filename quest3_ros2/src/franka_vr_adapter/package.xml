@@ -3,7 +3,7 @@
 <package format="3">
   <name>franka_vr_adapter</name>
   <version>0.1.0</version>
-  <description>Safety-gated Quest 3 joint target adapter for the right FR3 arm.</description>
+  <description>Safety-gated Quest 3 joint target adapter for one selected FR3 arm.</description>
   <maintainer email="jianshuhu123@gmail.com">Jianshu Hu</maintainer>
   <license>Apache-2.0</license>
 

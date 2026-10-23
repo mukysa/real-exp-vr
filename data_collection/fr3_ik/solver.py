@@ -96,11 +96,17 @@ class ContinuousIK:
                             'evaluations': 0, 'ik_attempted': False}
 
         def result(state, reason, detail, checks=ConstraintChecks(), errors=(None, None), command=None):
+            elapsed = time.perf_counter() - started
+            computed_stamp = type(request.target_stamp)(
+                request.target_stamp.seconds + elapsed,
+                request.target_stamp.domain,
+                request.target_stamp.clock_id,
+            )
             if self.tracking_mode == 'dexarena_velocity' and state == ResultState.FOLLOWING:
                 return DiagnosticIKResult(request, state, reason, detail, command, self.last,
-                                          time.perf_counter() - started, *errors, checks, True)
+                                          elapsed, *errors, checks, True)
             return IKResult(request, state, reason, detail, command, self.last,
-                            time.perf_counter() - started, *errors, checks)
+                            elapsed, *errors, checks, computed_stamp)
 
         def fail(reason, detail, checks=ConstraintChecks(), errors=(None, None), reanchor=False):
             if self.tracking_mode == 'dexarena_velocity':
@@ -225,4 +231,5 @@ class ContinuousIK:
         self.fault = FailureReason.INVALID_INPUT
         self.diagnostics = {'candidate_q': None, 'candidate_velocity': None, 'candidate_acceleration': None,
                             'evaluations': 0, 'ik_attempted': False}
-        return IKResult(request, ResultState.FAULT, self.fault, detail, None, self.last, 0)
+        return IKResult(request, ResultState.FAULT, self.fault, detail, None, self.last, 0,
+                        computed_stamp=request.target_stamp)

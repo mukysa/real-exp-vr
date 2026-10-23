@@ -44,6 +44,22 @@ def test_rate_limited_step_keeps_direction_and_catches_up():
     assert sum(residual(kin.fk(q), target)) < initial_error * .01
 
 
+def test_adaptive_damping_is_explicit_and_preserves_finite_absolute_targets():
+    kin, limits = Kinematics(), Limits.from_controller()
+    q = np.array(Q0)
+    target = kin.fk(q)
+    target[:3, 3] += [.005, 0, 0]
+    result, info = differential_step(
+        kin, q, target, .05, limits.lower, limits.upper,
+        damping_mode='adaptive')
+    assert info['damping_mode'] == 'adaptive'
+    assert np.isfinite(result).all()
+    assert np.all(result >= limits.lower) and np.all(result <= limits.upper)
+    with np.testing.assert_raises(ValueError):
+        differential_step(kin, q, target, .05, limits.lower, limits.upper,
+                          damping_mode='unknown')
+
+
 def test_display_window_ends_on_second_press_even_after_fault():
     events = [dict(action=a, source_monotonic_s=t) for a, t in
               [('engage_both', 12.), ('fault_hold_both', 13.), ('hold_both', 15.)]]
