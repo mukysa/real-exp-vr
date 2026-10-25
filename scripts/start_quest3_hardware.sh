@@ -107,6 +107,7 @@ log_dir="${repository_root}/outputs/quest3_hardware/$(date +%Y%m%d-%H%M%S)-${mod
 mkdir -p "${log_dir}"
 children=()
 hardware_pids=()
+declare -A hardware_side_by_pid
 cleanup() {
   trap - EXIT INT TERM
   for pid in "${children[@]}"; do kill -TERM -- "-${pid}" 2>/dev/null || true; done
@@ -121,9 +122,13 @@ start_process() {
   children+=("$!")
 }
 require_hardware_alive() {
+  local pid side
   for pid in "${hardware_pids[@]}"; do
     kill -0 "${pid}" 2>/dev/null || {
-      echo "Error: selected FR3 hardware process exited. Logs: ${log_dir}" >&2
+      side="${hardware_side_by_pid[$pid]}"
+      echo "Error: ${side} FR3 hardware process exited. Logs: ${log_dir}" >&2
+      grep -E 'FCI_DIAGNOSTIC|communication_constraints_violation|\[ERROR\]|  what\(\):' \
+        "${log_dir}/hardware-${side}.log" | tail -8 >&2 || true
       return 1
     }
   done
@@ -158,6 +163,7 @@ for side in "${sides[@]}"; do
     use_fake_hardware:=false fake_sensor_commands:=false \
     joint_sources:=joint_states joint_state_rate:=30 deployment_mode:=false
   hardware_pids+=("${children[${#children[@]}-1]}")
+  hardware_side_by_pid["${children[${#children[@]}-1]}"]="${side}"
   wait_for_topic "/${side}/joint_states"
 done
 
