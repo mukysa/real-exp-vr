@@ -214,6 +214,7 @@ __marimo__/
 lerobot_data
 data
 outputs
+logs/
 replay_trace
 recordings/quest_raw/
 
