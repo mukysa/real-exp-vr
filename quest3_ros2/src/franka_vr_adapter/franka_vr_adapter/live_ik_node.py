@@ -137,11 +137,12 @@ class LeftLiveIkNode(Node):
         self._sync_measured()
         if self.subscription.dropped_records:
             self.core._fault("Quest input queue overflow; restart required")
-        # Process at most one pose per executor turn.  IK can take tens of
-        # milliseconds, so draining the entire queue here would starve the
-        # measured-joint-state callback and falsely trip stale feedback.
+        # IK can take longer than the controller's 30 Hz input period while
+        # the hand is moving.  Always solve the newest pose so old samples do
+        # not accumulate and later trip the adapter's input-age gate.  The
+        # receiver still retains its lossless FIFO API for recording users.
         try:
-            received = self.subscription.get_nowait()
+            received = self.subscription.get_latest_nowait()
         except Empty:
             self.core.tick(time.monotonic())
             return

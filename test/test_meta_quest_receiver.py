@@ -91,3 +91,17 @@ def test_subscribers_receive_independent_ordered_streams_without_blocking() -> N
     receiver._record_line(LEFT)
     with pytest.raises(Empty):
         complete.get_nowait()
+
+
+def test_realtime_subscriber_can_coalesce_backlog_to_latest_pose() -> None:
+    receiver = PoseReceiver()
+    realtime = receiver.subscribe(max_queue_size=4)
+
+    receiver._record_line(RIGHT)
+    receiver._record_line(LEFT)
+    receiver._record_line(RIGHT)
+
+    assert realtime.get_latest_nowait().sequence == 3
+    assert realtime.dropped_records == 0
+    with pytest.raises(Empty):
+        realtime.get_nowait()

@@ -7,7 +7,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from queue import Full, Queue
+from queue import Empty, Full, Queue
 
 from .protocol import PoseSample, ProtocolError, parse_pose_line
 
@@ -41,6 +41,21 @@ class PoseSubscription:
 
     def get_nowait(self) -> ReceivedPose:
         return self._queue.get_nowait()
+
+    def get_latest_nowait(self) -> ReceivedPose:
+        """Return the newest queued pose, discarding older queued poses.
+
+        Lossless consumers should continue to use :meth:`get` or
+        :meth:`get_nowait`.  Real-time control consumers use this method so a
+        temporarily slow solve cannot turn fresh controller input into a
+        growing stale-input backlog.
+        """
+        latest = self._queue.get_nowait()
+        while True:
+            try:
+                latest = self._queue.get_nowait()
+            except Empty:
+                return latest
 
     def close(self) -> None:
         with self._lock:
