@@ -1,4 +1,4 @@
-"""Safety-bounded left-arm Quest control core with explicit Y-button return.
+"""Safety-bounded Quest arm control core with explicit left-Y return.
 
 This module contains no ROS publisher and opens no robot connection.  The ROS
 wrapper may publish only strict :class:`IKResult` values returned here.
@@ -43,13 +43,14 @@ class ControlUpdate:
 
 
 class LeftLiveControl:
-    """Convert left-controller poses into checked targets for one left FR3."""
+    """Convert one selected Touch controller into checked targets for its FR3."""
 
     def __init__(
         self,
         kinematics,
         *,
         clock_id: str,
+        side: str = "left",
         position_scale: float = 0.03,
         max_tcp_offset_m: float = 0.005,
         pose_shaper_bandwidth: float = 5.0,
@@ -62,6 +63,9 @@ class LeftLiveControl:
     ) -> None:
         if not clock_id.strip():
             raise ValueError("clock_id is required")
+        if side not in {"left", "right"}:
+            raise ValueError("side must be left or right")
+        self.side = side
         if not 0.0 < position_scale <= 1.0:
             raise ValueError("position_scale must be in (0, 1]")
         if not 0.0 <= max_tcp_offset_m <= 0.30:
@@ -157,7 +161,7 @@ class LeftLiveControl:
         stamp = self._stamp(received.received_monotonic_s)
         target = TargetPose(
             self._rigid(pose),
-            "left_fr3_link0",
+            f"{self.side}_fr3_link0",
             received.sequence,
             received.connection_id,
             stamp.seconds,
@@ -165,7 +169,7 @@ class LeftLiveControl:
             True,
             None,
         )
-        return IKRequest(target, stamp, stamp, "left_fr3_hand_tcp", "left")
+        return IKRequest(target, stamp, stamp, f"{self.side}_fr3_hand_tcp", self.side)
 
     def _target_from_source(self, source: np.ndarray) -> np.ndarray:
         """Map controller motion since takeover into the calibrated robot base."""
@@ -380,10 +384,10 @@ class LeftLiveControl:
 
     def process(self, received: ReceivedPose) -> ControlUpdate:
         sample = received.sample
-        if sample.side != "left" or sample.source != "controller":
+        if sample.side != self.side or sample.source != "controller":
             return ControlUpdate(self.state, self.reason)
         if not sample.tracked:
-            self._fault("left controller tracking invalid")
+            self._fault(f"{self.side} controller tracking invalid")
             return ControlUpdate(self.state, self.reason)
         source = converted_matrix(sample)
         now = received.received_monotonic_s
@@ -453,7 +457,7 @@ class LeftLiveControl:
         result = replace(result, computed_stamp=self._stamp(time.monotonic()))
         if result.success:
             self.last_command = result.command
-            self.reason = "following left controller; second Y returns home"
+            self.reason = f"following {self.side} controller; second Y returns home"
         else:
             self._fault(f"IK stopped: {result.reason.value}")
             # Do not latch the hardware adapter for a source-side IK stop.  Its

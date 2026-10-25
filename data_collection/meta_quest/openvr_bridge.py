@@ -204,28 +204,32 @@ def run_bridge(args: argparse.Namespace) -> None:
         return
 
     session_path = Path(args.alvr_session).expanduser()
-    if args.check_left_touch:
+    if args.check_left_touch or args.check_both_touch:
         if not alvr_is_streaming(session_path):
-            raise SystemExit("ALVR is not Streaming; physical left Touch check failed.")
+            raise SystemExit("ALVR is not Streaming; physical Touch check failed.")
         openvr.init(openvr.VRApplication_Background)
         try:
             system = openvr.VRSystem()
-            valid = 0
-            controller_id = openvr.k_unTrackedDeviceIndexInvalid
+            sides = ("left", "right") if args.check_both_touch else ("left",)
+            valid = {side: 0 for side in sides}
+            controller_ids = {side: openvr.k_unTrackedDeviceIndexInvalid for side in sides}
             for _ in range(30):
-                controller_id = _physical_controller_id(system, openvr, "left")
                 poses = system.getDeviceToAbsoluteTrackingPose(
                     openvr.TrackingUniverseStanding,
                     0.0,
                     openvr.k_unMaxTrackedDeviceCount,
                 )
-                if controller_id != openvr.k_unTrackedDeviceIndexInvalid:
-                    tracked = poses[controller_id]
-                    valid += int(tracked.bDeviceIsConnected and tracked.bPoseIsValid)
+                for side in sides:
+                    controller_id = _physical_controller_id(system, openvr, side)
+                    controller_ids[side] = controller_id
+                    if controller_id != openvr.k_unTrackedDeviceIndexInvalid:
+                        tracked = poses[controller_id]
+                        valid[side] += int(tracked.bDeviceIsConnected and tracked.bPoseIsValid)
                 time.sleep(0.1)
-            print(f"Physical left Touch: {valid}/30 valid OpenVR poses; id={controller_id}")
-            if valid != 30:
-                raise SystemExit("Physical left Touch tracking is not ready.")
+            for side in sides:
+                print(f"Physical {side} Touch: {valid[side]}/30 valid OpenVR poses; id={controller_ids[side]}")
+            if any(valid[side] != 30 for side in sides):
+                raise SystemExit("Physical Touch tracking is not ready.")
         finally:
             openvr.shutdown()
         return
@@ -281,10 +285,11 @@ def run_bridge(args: argparse.Namespace) -> None:
                     pose = openvr_matrix_to_unity_pose(tracked.mDeviceToAbsoluteTracking.m)
                     if args.single_left and side != "left":
                         continue
+                    left_y_button = args.single_left or (args.global_left_y and side == "left")
                     grasp, clutch, record = _controller_controls(
-                        system, controller_id, single_left=args.single_left
+                        system, controller_id, single_left=left_y_button
                     )
-                    if args.single_left and last_clutch.get(side) != clutch:
+                    if left_y_button and last_clutch.get(side) != clutch:
                         print(f"Left Y clutch={'pressed' if clutch else 'released'}", flush=True)
                         last_clutch[side] = clutch
                     line = compact_controller_line(
@@ -331,15 +336,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--side", choices=("both", "left", "right"), default="both")
     parser.add_argument("--single-left", action="store_true", help="left controller only; use Y as clutch")
+    parser.add_argument("--global-left-y", action="store_true", help="relay both controllers; left Y is the control toggle")
     parser.add_argument("--poll-hz", type=float, default=30.0)
     parser.add_argument("--report-interval-s", type=float, default=5.0)
     parser.add_argument("--alvr-session", default="~/.config/alvr/session.json")
     parser.add_argument("--no-alvr-wait", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--check-left-touch", action="store_true")
+    parser.add_argument("--check-both-touch", action="store_true")
     args = parser.parse_args(argv)
+    if args.single_left and args.global_left_y:
+        parser.error("--single-left and --global-left-y are mutually exclusive")
     if args.single_left:
         args.side = "left"
+    if args.global_left_y:
+        args.side = "both"
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
     if args.poll_hz <= 0.0:

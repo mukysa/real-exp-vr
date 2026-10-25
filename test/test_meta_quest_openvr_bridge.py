@@ -100,5 +100,9 @@ def test_single_left_other_buttons_do_not_engage(mask: int) -> None:
 def test_openvr_cli_validates_rates() -> None:
     assert parse_args(["--poll-hz", "60"]).poll_hz == 60.0
     assert parse_args(["--check-left-touch"]).check_left_touch is True
+    both = parse_args(["--global-left-y", "--check-both-touch"])
+    assert both.side == "both"
+    assert both.global_left_y is True
+    assert both.check_both_touch is True
     with pytest.raises(SystemExit):
         parse_args(["--poll-hz", "0"])

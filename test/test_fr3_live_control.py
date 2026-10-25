@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from data_collection.fr3_ik.kinematics import Kinematics
 from data_collection.fr3_ik.live_control import LeftLiveControl
+from data_collection.fr3_ik.mount_calibration import load_tabletop_calibration
 from data_collection.fr3_ik.preview_mapping import converted_matrix
 from data_collection.meta_quest.protocol import PoseSample
 from data_collection.meta_quest.receiver import ReceivedPose
@@ -19,10 +22,11 @@ def sample(
     *,
     y: bool = False,
     x: float = 0.0,
+    side: str = "left",
     quaternion_xyzw=(0.0, 0.0, 0.0, 1.0),
 ) -> ReceivedPose:
     pose = PoseSample(
-        "left",
+        side,
         "controller",
         (x, 1.0, 0.0),
         quaternion_xyzw,
@@ -35,7 +39,7 @@ def sample(
 def ready(core: LeftLiveControl) -> None:
     for sequence, timestamp in enumerate((1.00, 1.04, 1.08), 1):
         core.update_measured(Q, (0.0,) * 7, timestamp)
-        core.process(sample(sequence, timestamp))
+        core.process(sample(sequence, timestamp, side=core.side))
     assert core.state == "READY"
 
 
@@ -262,3 +266,40 @@ def test_each_left_controller_rotation_axis_reaches_ik_without_translation() -> 
             atol=1e-8,
         )
         assert 0.03 < np.linalg.norm(actual_rotvec) < 0.05
+
+
+def test_right_arm_uses_right_pose_and_left_y_control_signal() -> None:
+    core = LeftLiveControl(
+        Kinematics("right"), side="right", clock_id="test",
+        position_scale=1.0, max_tcp_offset_m=0.0,
+        relaxed_motion_gates=True,
+    )
+    ready(core)
+    core.update_measured(Q, (0.0,) * 7, 1.20)
+    engaged = core.process(sample(4, 1.20, side="right", y=True))
+    assert engaged.result is not None and engaged.result.success
+    assert engaged.result.request.side == "right"
+    assert engaged.result.request.target.frame_id == "right_fr3_link0"
+    assert core.state == "FOLLOWING"
+
+    core.update_measured(Q, (0.0,) * 7, 1.24)
+    following = core.process(sample(5, 1.24, side="right"))
+    assert following.result is not None and following.result.success
+    core.update_measured(Q, (0.0,) * 7, 1.40)
+    returning = core.process(sample(6, 1.40, side="right", y=True))
+    assert returning.result is not None and returning.result.success
+    assert core.state == "READY"
+
+
+def test_right_arm_uses_documented_tabletop_mount() -> None:
+    calibration = Path(__file__).resolve().parents[1] / "calibration/matrix.md"
+    mounts, _, _ = load_tabletop_calibration(calibration)
+    core = LeftLiveControl(
+        Kinematics("right"), side="right", clock_id="test",
+        world_from_base=mounts["right"], position_scale=1.0,
+    )
+    assert core.translation_frame == "tabletop_world_calibrated"
+    np.testing.assert_allclose(
+        mounts["right"][:3, :3] @ core.base_from_world_rotation,
+        np.eye(3), atol=1e-12,
+    )

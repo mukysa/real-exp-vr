@@ -52,3 +52,21 @@ def test_live_ik_node_loads_tabletop_mount_calibration() -> None:
     assert "load_tabletop_calibration" in source
     assert 'world_from_base=world_from_bases["left"]' in source
     assert '"translation_frame": self.core.translation_frame' in source
+
+
+def test_multi_arm_launch_uses_one_input_source_and_selected_adapters() -> None:
+    source = (PACKAGE_ROOT / "launch" / "quest_live_control.launch.py").read_text()
+    ast.parse(source)
+    assert 'executable="multi_live_ik_node"' in source
+    assert 'executable="adapter_node"' in source
+    assert 'if mode == "duo" else (mode,)' in source
+    assert "controller_manager" not in source
+    assert "172.16." not in source
+
+
+def test_multi_arm_source_uses_left_y_and_both_calibrations() -> None:
+    source = (PACKAGE_ROOT / "franka_vr_adapter" / "multi_live_ik_node.py").read_text()
+    ast.parse(source)
+    assert "PairedQuestInput(self.mode)" in source
+    assert "world_from_base=calibrations[side]" in source
+    assert '"button": "physical left Y"' in source

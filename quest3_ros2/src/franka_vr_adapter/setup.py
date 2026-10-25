@@ -27,6 +27,7 @@ setup(
         "console_scripts": [
             "adapter_node = franka_vr_adapter.adapter_node:main",
             "live_ik_node = franka_vr_adapter.live_ik_node:main",
+            "multi_live_ik_node = franka_vr_adapter.multi_live_ik_node:main",
         ],
     },
 )
