@@ -33,11 +33,11 @@ env -u WAYLAND_DISPLAY DISPLAY=:0 ./tools/alvr-v20.14.1/bin/alvr_dashboard
 env -u WAYLAND_DISPLAY DISPLAY=:0 /home/landau/.local/share/Steam/steam.sh -applaunch 250820
 ```
 
-戴上 Quest，打开 ALVR 20.14.1，连接电脑，保持 `Streaming`，握住两只实体 Touch 手柄。三种模式均持续读取双手柄，均由实体左手柄 Y 接管和回位。
+戴上 Quest，打开 ALVR 20.14.1，连接电脑，保持 `Streaming`，握住两只实体 Touch 手柄。关闭 Quest 系统菜单，使 ALVR 保持前台。三种模式都会先检查并持续读取双手柄；实体左手柄 Y 是唯一接管／回位键。
 
 ## 3. 选择机械臂并启动
 
-确认所选机械臂 Desk 绿色、FCI 开启、工作空间空旷且急停可触及。在新的 client 终端先执行：
+确认所选机械臂 Desk 绿色、FCI 开启、工作空间空旷且急停可触及；双臂模式要分别确认左右臂。在新的 client 终端先执行：
 
 ```bash
 cd /home/landau/real-exp-vr
@@ -64,7 +64,9 @@ bash scripts/start_quest3_hardware.sh --right --enable-hardware
 bash scripts/start_quest3_hardware.sh --duo --enable-hardware
 ```
 
-等待 `Hardware chain ready` 和所选侧 `SOURCE_STATUS ... READY`。第一次左 Y 接管所选机械臂；`--left` 跟随左手柄、`--right` 跟随右手柄、`--duo` 同时跟随两只手柄。第二次左 Y 令所选机械臂返回本轮接管点；回位完成并松开 Y 后可再次接管。右手柄 B 不触发接管。
+脚本先报告左右实体 Touch 均为 `30/30 valid OpenVR poses`，再启动所选机械臂。等待 `Hardware chain ready` 和所选侧的 `LEFT_SOURCE_STATUS`／`RIGHT_SOURCE_STATUS` 显示 `"state":"READY"`；双臂模式必须**两侧都 READY**，此时才按左 Y。
+
+第一次短按左 Y 接管所选机械臂：`--left` 跟随左手柄，`--right` 跟随右手柄，`--duo` 同时跟随两只手柄。第二次短按左 Y 返回本轮各自的接管点；回位完成并松开 Y 后可再次接管。右手柄 B 不触发接管。若双臂中任一侧显示适配器 `STOP`，在启动终端按 `Ctrl+C`，排除故障后重启会话。
 
 ## 4. 结束
 
