@@ -151,6 +151,37 @@ def _controller_controls(system: Any, controller_id: int, *, single_left: bool =
     return trigger, bool(mask & (BUTTON_Y if single_left else BUTTON_B)), bool(mask & BUTTON_A)
 
 
+def _physical_controller_id(system: Any, openvr: Any, side: str) -> int:
+    """Find the ALVR Touch controller, even if a virtual hand owns its role."""
+
+    expected_serial_suffix = f"_Controller_{side.title()}"
+    role = (
+        openvr.TrackedControllerRole_LeftHand
+        if side == "left"
+        else openvr.TrackedControllerRole_RightHand
+    )
+    role_id = int(system.getTrackedDeviceIndexForControllerRole(role))
+
+    def matches(device_id: int) -> bool:
+        try:
+            return (
+                system.getTrackedDeviceClass(device_id)
+                == openvr.TrackedDeviceClass_Controller
+                and system.getStringTrackedDeviceProperty(
+                    device_id, openvr.Prop_SerialNumber_String
+                ).endswith(expected_serial_suffix)
+            )
+        except Exception:
+            return False
+
+    if role_id != openvr.k_unTrackedDeviceIndexInvalid and matches(role_id):
+        return role_id
+    for device_id in range(openvr.k_unMaxTrackedDeviceCount):
+        if device_id != role_id and matches(device_id):
+            return device_id
+    return openvr.k_unTrackedDeviceIndexInvalid
+
+
 def _wait_for_alvr(session_path: Path, power: QuestKeepAwake) -> None:
     last_report = 0.0
     while not alvr_is_streaming(session_path):
@@ -173,6 +204,32 @@ def run_bridge(args: argparse.Namespace) -> None:
         return
 
     session_path = Path(args.alvr_session).expanduser()
+    if args.check_left_touch:
+        if not alvr_is_streaming(session_path):
+            raise SystemExit("ALVR is not Streaming; physical left Touch check failed.")
+        openvr.init(openvr.VRApplication_Background)
+        try:
+            system = openvr.VRSystem()
+            valid = 0
+            controller_id = openvr.k_unTrackedDeviceIndexInvalid
+            for _ in range(30):
+                controller_id = _physical_controller_id(system, openvr, "left")
+                poses = system.getDeviceToAbsoluteTrackingPose(
+                    openvr.TrackingUniverseStanding,
+                    0.0,
+                    openvr.k_unMaxTrackedDeviceCount,
+                )
+                if controller_id != openvr.k_unTrackedDeviceIndexInvalid:
+                    tracked = poses[controller_id]
+                    valid += int(tracked.bDeviceIsConnected and tracked.bPoseIsValid)
+                time.sleep(0.1)
+            print(f"Physical left Touch: {valid}/30 valid OpenVR poses; id={controller_id}")
+            if valid != 30:
+                raise SystemExit("Physical left Touch tracking is not ready.")
+        finally:
+            openvr.shutdown()
+        return
+
     power = QuestKeepAwake()
     openvr_initialized = False
     try:
@@ -183,11 +240,7 @@ def run_bridge(args: argparse.Namespace) -> None:
         openvr.init(openvr.VRApplication_Background)
         openvr_initialized = True
         system = openvr.VRSystem()
-        roles = {
-            "left": openvr.TrackedControllerRole_LeftHand,
-            "right": openvr.TrackedControllerRole_RightHand,
-        }
-        selected = roles.items() if args.side == "both" else ((args.side, roles[args.side]),)
+        selected = ("left", "right") if args.side == "both" else (args.side,)
         print(
             f"Connecting direct OpenVR input to PoseReceiver at {args.host}:{args.port}; "
             "robot_output_enabled=false",
@@ -217,8 +270,8 @@ def run_bridge(args: argparse.Namespace) -> None:
                 frame_id += 1
                 timestamp_ns = time.monotonic_ns()
                 current_ids: dict[str, int] = {}
-                for side, role in selected:
-                    controller_id = int(system.getTrackedDeviceIndexForControllerRole(role))
+                for side in selected:
+                    controller_id = _physical_controller_id(system, openvr, side)
                     if controller_id == openvr.k_unTrackedDeviceIndexInvalid:
                         continue
                     current_ids[side] = controller_id
@@ -283,6 +336,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--alvr-session", default="~/.config/alvr/session.json")
     parser.add_argument("--no-alvr-wait", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--check-left-touch", action="store_true")
     args = parser.parse_args(argv)
     if args.single_left:
         args.side = "left"

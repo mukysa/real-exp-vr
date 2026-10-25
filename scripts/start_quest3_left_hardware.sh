@@ -68,6 +68,8 @@ if [[ "${mode}" == "--check-only" ]]; then
   exit 0
 fi
 
+bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" --check-left-touch
+
 if pgrep -af '172\.16\.0\.3|example_fr3_config|left_quest_live_ik|franka_vr_adapter.*left' \
     | grep -v -E 'pgrep|start_quest3_left_hardware' >/dev/null; then
   echo "Error: another LEFT robot/teleoperation process is running; stop it before continuing." >&2
@@ -110,17 +112,29 @@ start_process() {
   setsid -- "$@" >"${log_dir}/${name}.log" 2>&1 &
   children+=("$!")
 }
+require_hardware_alive() {
+  if ! kill -0 "${hardware_pid}" 2>/dev/null; then
+    echo "Error: left FR3 hardware process exited. Recent hardware log:" >&2
+    tail -15 "${log_dir}/hardware.log" >&2 || true
+    return 1
+  fi
+}
 wait_for_topic() {
   local topic="$1" deadline=$((SECONDS + 45))
+  echo "Waiting for ${topic} (up to 45 seconds)."
   while ((SECONDS < deadline)); do
+    require_hardware_alive
     if timeout 3s ros2 topic echo "${topic}" --once --no-daemon >/dev/null 2>&1; then return 0; fi
   done
   echo "Error: timed out waiting for ${topic}" >&2
+  timeout 3s ros2 topic info --no-daemon "${topic}" >&2 || true
+  tail -15 "${log_dir}/hardware.log" >&2 || true
   return 1
 }
 wait_for_port() {
   local port="$1" deadline=$((SECONDS + 30))
   while ((SECONDS < deadline)); do
+    require_hardware_alive
     if ss -ltn | awk '{print $4}' | grep -Eq ":${port}$"; then return 0; fi
     sleep 0.2
   done
@@ -182,6 +196,7 @@ bridge_pid="${children[${#children[@]}-1]}"
 last_status=""
 last_adapter_status=""
 while kill -0 "${bridge_pid}" 2>/dev/null; do
+  require_hardware_alive
   current_status="$(
     timeout 2s ros2 topic echo /left/vr/source_status --once --field data --no-daemon \
       2>/dev/null | head -1 || true

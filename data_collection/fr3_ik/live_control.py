@@ -167,6 +167,26 @@ class LeftLiveControl:
         )
         return IKRequest(target, stamp, stamp, "left_fr3_hand_tcp", "left")
 
+    def _target_from_source(self, source: np.ndarray) -> np.ndarray:
+        """Map controller motion since takeover into the calibrated robot base."""
+        assert self.home_pose is not None and self.source_anchor is not None
+        target = self.home_pose.copy()
+        delta_world = source[:3, 3] - self.source_anchor[:3, 3]
+        target[:3, 3] += self.position_scale * (
+            self.base_from_world_rotation @ delta_world
+        )
+        # The controller's converted rotation is expressed in tabletop world
+        # axes. Apply its spatial change about those axes to the measured TCP
+        # orientation at Y takeover, without an initial orientation jump.
+        delta_world_rotation = source[:3, :3] @ self.source_anchor[:3, :3].T
+        target[:3, :3] = (
+            self.base_from_world_rotation
+            @ delta_world_rotation
+            @ self.world_from_base[:3, :3]
+            @ self.home_pose[:3, :3]
+        )
+        return target
+
     def _joint_result(
         self,
         received: ReceivedPose,
@@ -412,10 +432,7 @@ class LeftLiveControl:
 
         assert self.state == "FOLLOWING"
         assert self.home_pose is not None and self.source_anchor is not None
-        target = self.home_pose.copy()
-        delta_world = source[:3, 3] - self.source_anchor[:3, 3]
-        delta_base = self.base_from_world_rotation @ delta_world
-        target[:3, 3] = self.home_pose[:3, 3] + self.position_scale * delta_base
+        target = self._target_from_source(source)
         if (
             self.max_tcp_offset_m > 0.0
             and float(np.linalg.norm(target[:3, 3] - self.home_pose[:3, 3]))

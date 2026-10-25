@@ -13,12 +13,19 @@ from data_collection.meta_quest.receiver import ReceivedPose
 Q = (-0.11657, 0.42515, -0.66825, -1.97659, 0.82153, 1.84735, -1.95020)
 
 
-def sample(sequence: int, timestamp: float, *, y: bool = False, x: float = 0.0) -> ReceivedPose:
+def sample(
+    sequence: int,
+    timestamp: float,
+    *,
+    y: bool = False,
+    x: float = 0.0,
+    quaternion_xyzw=(0.0, 0.0, 0.0, 1.0),
+) -> ReceivedPose:
     pose = PoseSample(
         "left",
         "controller",
         (x, 1.0, 0.0),
-        (0.0, 0.0, 0.0, 1.0),
+        quaternion_xyzw,
         True,
         clutch=y,
     )
@@ -188,3 +195,70 @@ def test_tabletop_translation_is_rotated_into_tilted_left_base() -> None:
     assert core.translation_frame == "tabletop_world_calibrated"
     assert abs(delta_base[1]) > 0.1
     assert abs(delta_base[2]) > 0.1
+
+
+def test_controller_rotation_maps_one_to_one_about_calibrated_world_axes() -> None:
+    world_from_base = np.eye(4)
+    world_from_base[:3, :3] = Rotation.from_euler(
+        "xyz", [0.8, 0.06, -0.04]
+    ).as_matrix()
+    core = LeftLiveControl(
+        Kinematics("left"), clock_id="test", world_from_base=world_from_base
+    )
+    core.home_pose = core.kin.fk(Q)
+    core.source_anchor = np.eye(4)
+    core.source_anchor[:3, :3] = Rotation.from_euler(
+        "xyz", [0.15, -0.1, 0.2]
+    ).as_matrix()
+    base_rotation = world_from_base[:3, :3]
+
+    for axis in np.eye(3):
+        angle = 0.12
+        delta_world = Rotation.from_rotvec(angle * axis).as_matrix()
+        source = core.source_anchor.copy()
+        source[:3, :3] = delta_world @ core.source_anchor[:3, :3]
+        target = core._target_from_source(source)
+        np.testing.assert_allclose(target[:3, 3], core.home_pose[:3, 3])
+        np.testing.assert_allclose(
+            base_rotation @ target[:3, :3],
+            delta_world @ base_rotation @ core.home_pose[:3, :3],
+            atol=1e-12,
+        )
+        assert np.isclose(
+            Rotation.from_matrix(
+                target[:3, :3] @ core.home_pose[:3, :3].T
+            ).magnitude(),
+            angle,
+        )
+
+
+def test_each_left_controller_rotation_axis_reaches_ik_without_translation() -> None:
+    for unity_axis in np.eye(3):
+        core = LeftLiveControl(
+            Kinematics("left"), clock_id="test", pose_shaper_bandwidth=100.0,
+            relaxed_motion_gates=True,
+        )
+        ready(core)
+        core.update_measured(Q, (0.0,) * 7, 1.20)
+        core.process(sample(4, 1.20, y=True))
+        core.update_measured(Q, (0.0,) * 7, 1.24)
+        rotated = sample(
+            5, 1.24,
+            quaternion_xyzw=tuple(Rotation.from_rotvec(0.05 * unity_axis).as_quat()),
+        )
+        following = core.process(rotated)
+        assert following.result is not None and following.result.success
+        request_pose = following.result.request.target.pose
+        np.testing.assert_allclose(request_pose.position, core.home_pose[:3, 3], atol=1e-12)
+        desired_rotation = Rotation.from_quat(request_pose.quaternion_xyzw).as_matrix()
+        delta_base = desired_rotation @ core.home_pose[:3, :3].T
+        actual_rotvec = Rotation.from_matrix(delta_base).as_rotvec()
+        converted_rotvec = Rotation.from_matrix(
+            converted_matrix(rotated.sample)[:3, :3]
+        ).as_rotvec()
+        np.testing.assert_allclose(
+            actual_rotvec / np.linalg.norm(actual_rotvec),
+            converted_rotvec / np.linalg.norm(converted_rotvec),
+            atol=1e-8,
+        )
+        assert 0.03 < np.linalg.norm(actual_rotvec) < 0.05

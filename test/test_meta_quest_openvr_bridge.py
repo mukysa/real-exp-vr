@@ -7,6 +7,7 @@ import pytest
 
 from data_collection.meta_quest.openvr_bridge import (
     _controller_controls,
+    _physical_controller_id,
     _rotation_matrix_to_quaternion,
     openvr_matrix_to_unity_pose,
     parse_args,
@@ -64,6 +65,31 @@ def test_single_left_maps_y_and_dual_mode_keeps_b_button_bit() -> None:
     assert parse_args(["--single-left"]).side == "left"
 
 
+def test_physical_left_controller_wins_over_virtual_hand_role() -> None:
+    openvr = SimpleNamespace(
+        TrackedControllerRole_LeftHand=1,
+        TrackedControllerRole_RightHand=2,
+        TrackedDeviceClass_Controller=2,
+        Prop_SerialNumber_String=100,
+        k_unTrackedDeviceIndexInvalid=4294967295,
+        k_unMaxTrackedDeviceCount=5,
+    )
+    serials = {
+        1: "1WMHH000X00000_Controller_Left",
+        3: "VRLINKQ_Hand_Left",
+    }
+    system = SimpleNamespace(
+        getTrackedDeviceIndexForControllerRole=lambda role: 3,
+        getTrackedDeviceClass=lambda device_id: 2 if device_id in serials else 0,
+        getStringTrackedDeviceProperty=lambda device_id, prop: serials[device_id],
+    )
+
+    assert _physical_controller_id(system, openvr, "left") == 1
+
+    del serials[1]
+    assert _physical_controller_id(system, openvr, "left") == openvr.k_unTrackedDeviceIndexInvalid
+
+
 @pytest.mark.parametrize('mask', [0, 1 << 7, 1 << 3, 1 << 2])
 def test_single_left_other_buttons_do_not_engage(mask: int) -> None:
     state = SimpleNamespace(ulButtonPressed=mask, rAxis=[])
@@ -73,5 +99,6 @@ def test_single_left_other_buttons_do_not_engage(mask: int) -> None:
 
 def test_openvr_cli_validates_rates() -> None:
     assert parse_args(["--poll-hz", "60"]).poll_hz == 60.0
+    assert parse_args(["--check-left-touch"]).check_left_touch is True
     with pytest.raises(SystemExit):
         parse_args(["--poll-hz", "0"])
