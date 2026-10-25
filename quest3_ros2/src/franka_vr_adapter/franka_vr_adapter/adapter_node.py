@@ -78,6 +78,7 @@ class VrAdapterNode(Node):
             ("ik_timeout_s", 0.15),
             ("max_joint_step_rad", 0.10),
             ("velocity_scale", 1.0),
+            ("initial_match_tolerance_rad", 1e-4),
             ("expected_sequence_step", 2),
         ):
             self.declare_parameter(name, default)
@@ -99,6 +100,9 @@ class VrAdapterNode(Node):
             ik_timeout_s=float(self.get_parameter("ik_timeout_s").value),
             max_joint_step_rad=float(self.get_parameter("max_joint_step_rad").value),
             velocity_scale=float(self.get_parameter("velocity_scale").value),
+            initial_match_tolerance_rad=float(
+                self.get_parameter("initial_match_tolerance_rad").value
+            ),
             # A non-positive value disables exact-gap checking while retaining
             # the strictly-increasing check.  Live control intentionally emits
             # no IK results while READY, so a new Y takeover can legitimately

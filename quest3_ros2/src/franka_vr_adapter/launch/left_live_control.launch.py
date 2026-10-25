@@ -25,6 +25,14 @@ def generate_launch_description() -> LaunchDescription:
                 # READY and emits no IKResult.  Require monotonicity, but do
                 # not treat that intentional inter-episode gap as packet loss.
                 "expected_sequence_step": 0,
+                # Continuity-first live profile.  The hardware controller's
+                # 0.5 s watchdog and 1 kHz bounded reference remain active.
+                "robot_state_timeout_s": 1.0,
+                "input_timeout_s": 2.0,
+                "ik_timeout_s": 1.0,
+                "max_joint_step_rad": 6.0,
+                "velocity_scale": 1000.0,
+                "initial_match_tolerance_rad": 0.05,
             }],
             output="screen",
         ),
@@ -34,6 +42,11 @@ def generate_launch_description() -> LaunchDescription:
             parameters=[{
                 "position_scale": ParameterValue(position_scale, value_type=float),
                 "max_tcp_offset_m": ParameterValue(max_tcp_offset_m, value_type=float),
+                "measured_timeout_s": 1.0,
+                "input_timeout_s": 2.0,
+                "relaxed_motion_gates": True,
+                "max_source_translation_step_m": 2.0,
+                "max_source_rotation_step_rad": 3.141592653589793,
             }],
             output="screen",
         ),

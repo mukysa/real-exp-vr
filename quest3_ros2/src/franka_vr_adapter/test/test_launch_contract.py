@@ -39,3 +39,7 @@ def test_left_live_launch_allows_inter_episode_sequence_gaps() -> None:
 
     ast.parse(source)
     assert '"expected_sequence_step": 0' in source
+    assert '"input_timeout_s": 2.0' in source
+    assert '"max_joint_step_rad": 6.0' in source
+    assert '"velocity_scale": 1000.0' in source
+    assert '"relaxed_motion_gates": True' in source

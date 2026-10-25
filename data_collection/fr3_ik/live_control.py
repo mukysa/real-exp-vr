@@ -55,6 +55,9 @@ class LeftLiveControl:
         pose_shaper_bandwidth: float = 5.0,
         measured_timeout_s: float = 0.15,
         input_timeout_s: float = 1.0,
+        relaxed_motion_gates: bool = False,
+        max_source_translation_step_m: float = 0.15,
+        max_source_rotation_step_rad: float = 0.75,
     ) -> None:
         if not clock_id.strip():
             raise ValueError("clock_id is required")
@@ -69,6 +72,22 @@ class LeftLiveControl:
         self.measured_timeout_s = float(measured_timeout_s)
         self.input_timeout_s = float(input_timeout_s)
         self.limits = Limits.from_controller()
+        if relaxed_motion_gates:
+            # The 1 kHz hardware JointReferenceGenerator remains the motion
+            # limiter.  Live IK may submit any finite in-envelope target
+            # without duplicating its velocity/acceleration gates here.
+            self.limits = replace(
+                self.limits,
+                velocity=(1000.0,) * 7,
+                acceleration=(100000.0,) * 7,
+                max_step_rad=6.0,
+                input_gap_s=self.input_timeout_s,
+                source_jump_m=float(max_source_translation_step_m),
+                source_jump_rad=float(max_source_rotation_step_rad),
+            )
+        self.relaxed_motion_gates = bool(relaxed_motion_gates)
+        self.max_source_translation_step_m = float(max_source_translation_step_m)
+        self.max_source_rotation_step_rad = float(max_source_rotation_step_rad)
         self.solver = ContinuousIK(self.kin, limits=self.limits, max_evaluations=120)
         self.shaper = PoseReferenceShaper(pose_shaper_bandwidth)
         self.button = DebouncedButtonEdge(0.15)
@@ -341,7 +360,8 @@ class LeftLiveControl:
             if self.state == "FOLLOWING" and self.last_source is not None:
                 step = float(np.linalg.norm(source[:3, 3] - self.last_source[:3, 3]))
                 angle = float(Rotation.from_matrix(source[:3, :3] @ self.last_source[:3, :3].T).magnitude())
-                if step > 0.15 or angle > 0.75:
+                if (step > self.max_source_translation_step_m
+                        or angle > self.max_source_rotation_step_rad):
                     self._fault("Quest pose discontinuity; restart required")
                     return ControlUpdate(self.state, self.reason)
         self.last_pose_stamp = now

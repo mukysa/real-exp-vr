@@ -127,8 +127,6 @@ class AdapterCore:
     ) -> GateDecision:
         if not isinstance(result, IKResult):
             return self._reject(AdapterState.STOP, "ik_contract_type", latch=True)
-        if self.fault_latched:
-            return self._reject(AdapterState.STOP, "fault_latched_reanchor_required")
         if gello_conflict:
             return self._reject(AdapterState.STOP, "command_source_conflict", latch=True)
         if not quest_connected:
@@ -151,6 +149,26 @@ class AdapterCore:
             return self._reject(AdapterState.STOP, "input_stale", latch=True)
         if ik_age < 0 or ik_age > self.ik_timeout_s:
             return self._reject(AdapterState.STOP, "ik_result_stale", latch=True)
+
+        # A source-side recovery is emitted only after the operator presses Y.
+        # It must be a fresh, fully checked FOLLOWING result whose command
+        # matches measured q.  That exact measured-state anchor is the only
+        # message allowed to clear a previously latched adapter fault.
+        if self.fault_latched:
+            recovery = (
+                result.success
+                and result.state == ResultState.FOLLOWING
+                and result.command is not None
+                and result.checks.all_passed
+                and result.detail == "Measured-state recovery anchor before bounded return"
+                and max(abs(value - actual) for value, actual in zip(
+                    result.command.joints.positions_rad,
+                    measured_state.joints.positions_rad,
+                )) <= self.initial_match_tolerance_rad
+            )
+            if not recovery:
+                return self._reject(AdapterState.STOP, "fault_latched_reanchor_required")
+            self.reset_for_reanchor()
 
         connection_id = result.request.target.source_connection_id
         sequence = result.request.target.source_sequence

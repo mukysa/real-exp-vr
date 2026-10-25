@@ -43,6 +43,11 @@ class LeftLiveIkNode(Node):
             ("position_scale", 0.03),
             ("max_tcp_offset_m", 0.005),
             ("pose_shaper_bandwidth", 5.0),
+            ("measured_timeout_s", 0.15),
+            ("input_timeout_s", 1.0),
+            ("relaxed_motion_gates", False),
+            ("max_source_translation_step_m", 0.15),
+            ("max_source_rotation_step_rad", 0.75),
             ("measured_topic", "/left/joint_states"),
             ("ik_result_topic", "/left/vr/ik_result"),
             ("status_topic", "/left/vr/source_status"),
@@ -55,6 +60,15 @@ class LeftLiveIkNode(Node):
             position_scale=float(self.get_parameter("position_scale").value),
             max_tcp_offset_m=float(self.get_parameter("max_tcp_offset_m").value),
             pose_shaper_bandwidth=float(self.get_parameter("pose_shaper_bandwidth").value),
+            measured_timeout_s=float(self.get_parameter("measured_timeout_s").value),
+            input_timeout_s=float(self.get_parameter("input_timeout_s").value),
+            relaxed_motion_gates=bool(self.get_parameter("relaxed_motion_gates").value),
+            max_source_translation_step_m=float(
+                self.get_parameter("max_source_translation_step_m").value
+            ),
+            max_source_rotation_step_rad=float(
+                self.get_parameter("max_source_rotation_step_rad").value
+            ),
         )
         self.result_publisher = self.create_publisher(
             String, str(self.get_parameter("ik_result_topic").value), 10
@@ -167,6 +181,7 @@ class LeftLiveIkNode(Node):
                 self.core.max_tcp_offset_m if self.core.max_tcp_offset_m > 0.0 else None
             ),
             "tcp_workspace_limit_enabled": self.core.max_tcp_offset_m > 0.0,
+            "relaxed_motion_gates": self.core.relaxed_motion_gates,
         }
         message = String()
         message.data = json.dumps(payload, separators=(",", ":"), sort_keys=True)

@@ -144,3 +144,20 @@ def test_newer_measured_callback_does_not_false_trip_stale_feedback() -> None:
 
     assert update.result is not None and update.result.success
     assert core.state == "FOLLOWING"
+
+
+def test_relaxed_live_profile_uses_hardware_controller_as_motion_limiter() -> None:
+    core = LeftLiveControl(
+        Kinematics("left"),
+        clock_id="test",
+        input_timeout_s=2.0,
+        relaxed_motion_gates=True,
+        max_source_translation_step_m=2.0,
+        max_source_rotation_step_rad=3.141592653589793,
+    )
+
+    assert core.limits.max_step_rad == 6.0
+    assert core.limits.input_gap_s == 2.0
+    assert min(core.limits.velocity) == 1000.0
+    assert min(core.limits.acceleration) == 100000.0
+    assert core.max_source_translation_step_m == 2.0

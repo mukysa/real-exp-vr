@@ -159,3 +159,19 @@ def test_velocity_limit_and_fault_latch_require_reanchor() -> None:
     assert still_rejected.reject_reason == "fault_latched_reanchor_required"
     gate.reset_for_reanchor()
     assert gate.assess(following(7, 1.15), measured(1.15), stamp(1.15)).would_publish
+
+
+def test_latched_fault_accepts_only_explicit_measured_recovery_anchor() -> None:
+    gate = ready_gate(initial_match_tolerance_rad=0.05)
+    assert gate.assess(following(), measured(), stamp(1.01)).would_publish
+    gate.fault_latched = True
+    ordinary = gate.assess(following(3, 1.05), measured(1.05), stamp(1.05))
+    assert ordinary.reject_reason == "fault_latched_reanchor_required"
+
+    recovery = replace(
+        following(5, 1.10),
+        detail="Measured-state recovery anchor before bounded return",
+    )
+    resumed = gate.assess(recovery, measured(1.10), stamp(1.10))
+    assert resumed.would_publish
+    assert gate.fault_latched is False
