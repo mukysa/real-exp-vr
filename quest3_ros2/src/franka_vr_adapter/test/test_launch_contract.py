@@ -43,3 +43,12 @@ def test_left_live_launch_allows_inter_episode_sequence_gaps() -> None:
     assert '"max_joint_step_rad": 6.0' in source
     assert '"velocity_scale": 1000.0' in source
     assert '"relaxed_motion_gates": True' in source
+
+
+def test_live_ik_node_loads_tabletop_mount_calibration() -> None:
+    source = (PACKAGE_ROOT / "franka_vr_adapter" / "live_ik_node.py").read_text()
+
+    ast.parse(source)
+    assert "load_tabletop_calibration" in source
+    assert 'world_from_base=world_from_bases["left"]' in source
+    assert '"translation_frame": self.core.translation_frame' in source

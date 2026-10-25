@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import numpy as np
+from scipy.spatial.transform import Rotation
+
 from data_collection.fr3_ik.kinematics import Kinematics
 from data_collection.fr3_ik.live_control import LeftLiveControl
 from data_collection.fr3_ik.preview_mapping import converted_matrix
@@ -161,3 +164,27 @@ def test_relaxed_live_profile_uses_hardware_controller_as_motion_limiter() -> No
     assert min(core.limits.velocity) == 1000.0
     assert min(core.limits.acceleration) == 100000.0
     assert core.max_source_translation_step_m == 2.0
+
+
+def test_tabletop_translation_is_rotated_into_tilted_left_base() -> None:
+    world_from_base = np.eye(4)
+    world_from_base[:3, :3] = Rotation.from_euler(
+        "xyz", [0.8, 0.06, -0.04]
+    ).as_matrix()
+    core = LeftLiveControl(
+        Kinematics("left"),
+        clock_id="test",
+        world_from_base=world_from_base,
+    )
+
+    delta_world = np.array([0.0, 0.0, 0.20])
+    delta_base = core.base_from_world_rotation @ delta_world
+
+    np.testing.assert_allclose(
+        world_from_base[:3, :3] @ delta_base,
+        delta_world,
+        atol=1e-14,
+    )
+    assert core.translation_frame == "tabletop_world_calibrated"
+    assert abs(delta_base[1]) > 0.1
+    assert abs(delta_base[2]) > 0.1

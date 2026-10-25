@@ -26,11 +26,12 @@ def _add_repository_root_to_path() -> Path:
     raise ImportError("Build franka_vr_adapter with --symlink-install from the project checkout")
 
 
-_add_repository_root_to_path()
+REPOSITORY_ROOT = _add_repository_root_to_path()
 
 from data_collection.fr3_ik.interfaces import ik_result_to_dict  # noqa: E402
 from data_collection.fr3_ik.kinematics import Kinematics  # noqa: E402
 from data_collection.fr3_ik.live_control import LeftLiveControl  # noqa: E402
+from data_collection.fr3_ik.mount_calibration import load_tabletop_calibration  # noqa: E402
 from data_collection.meta_quest.receiver import PoseReceiver  # noqa: E402
 
 
@@ -48,12 +49,18 @@ class LeftLiveIkNode(Node):
             ("relaxed_motion_gates", False),
             ("max_source_translation_step_m", 0.15),
             ("max_source_rotation_step_rad", 0.75),
+            ("mount_calibration", str(REPOSITORY_ROOT / "calibration/matrix.md")),
             ("measured_topic", "/left/joint_states"),
             ("ik_result_topic", "/left/vr/ik_result"),
             ("status_topic", "/left/vr/source_status"),
         ):
             self.declare_parameter(name, default)
         clock_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        calibration_path = Path(str(self.get_parameter("mount_calibration").value))
+        world_from_bases, calibration_provenance, _ = load_tabletop_calibration(
+            calibration_path
+        )
+        self.calibration_provenance = calibration_provenance
         self.core = LeftLiveControl(
             Kinematics("left"),
             clock_id=clock_id,
@@ -69,6 +76,7 @@ class LeftLiveIkNode(Node):
             max_source_rotation_step_rad=float(
                 self.get_parameter("max_source_rotation_step_rad").value
             ),
+            world_from_base=world_from_bases["left"],
         )
         self.result_publisher = self.create_publisher(
             String, str(self.get_parameter("ik_result_topic").value), 10
@@ -182,6 +190,7 @@ class LeftLiveIkNode(Node):
             ),
             "tcp_workspace_limit_enabled": self.core.max_tcp_offset_m > 0.0,
             "relaxed_motion_gates": self.core.relaxed_motion_gates,
+            "translation_frame": self.core.translation_frame,
         }
         message = String()
         message.data = json.dumps(payload, separators=(",", ":"), sort_keys=True)

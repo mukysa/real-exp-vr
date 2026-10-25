@@ -58,6 +58,7 @@ class LeftLiveControl:
         relaxed_motion_gates: bool = False,
         max_source_translation_step_m: float = 0.15,
         max_source_rotation_step_rad: float = 0.75,
+        world_from_base: np.ndarray | None = None,
     ) -> None:
         if not clock_id.strip():
             raise ValueError("clock_id is required")
@@ -88,6 +89,27 @@ class LeftLiveControl:
         self.relaxed_motion_gates = bool(relaxed_motion_gates)
         self.max_source_translation_step_m = float(max_source_translation_step_m)
         self.max_source_rotation_step_rad = float(max_source_rotation_step_rad)
+        if world_from_base is None:
+            world_from_base = np.eye(4)
+        world_from_base = np.asarray(world_from_base, dtype=float)
+        if (
+            world_from_base.shape != (4, 4)
+            or not np.isfinite(world_from_base).all()
+            or not np.allclose(world_from_base[3], [0.0, 0.0, 0.0, 1.0], atol=1e-9)
+            or not np.allclose(
+                world_from_base[:3, :3].T @ world_from_base[:3, :3],
+                np.eye(3),
+                atol=1e-6,
+            )
+            or not np.isclose(np.linalg.det(world_from_base[:3, :3]), 1.0, atol=1e-6)
+        ):
+            raise ValueError("world_from_base must be a finite rigid 4x4 transform")
+        self.world_from_base = world_from_base.copy()
+        self.base_from_world_rotation = self.world_from_base[:3, :3].T
+        self.translation_frame = (
+            "base_axes" if np.allclose(self.world_from_base, np.eye(4), atol=1e-12)
+            else "tabletop_world_calibrated"
+        )
         self.solver = ContinuousIK(self.kin, limits=self.limits, max_evaluations=120)
         self.shaper = PoseReferenceShaper(pose_shaper_bandwidth)
         self.button = DebouncedButtonEdge(0.15)
@@ -391,8 +413,9 @@ class LeftLiveControl:
         assert self.state == "FOLLOWING"
         assert self.home_pose is not None and self.source_anchor is not None
         target = self.home_pose.copy()
-        delta = source[:3, 3] - self.source_anchor[:3, 3]
-        target[:3, 3] = self.home_pose[:3, 3] + self.position_scale * delta
+        delta_world = source[:3, 3] - self.source_anchor[:3, 3]
+        delta_base = self.base_from_world_rotation @ delta_world
+        target[:3, 3] = self.home_pose[:3, 3] + self.position_scale * delta_base
         if (
             self.max_tcp_offset_m > 0.0
             and float(np.linalg.norm(target[:3, 3] - self.home_pose[:3, 3]))
