@@ -31,7 +31,7 @@ Quest 3 左／右实体 Touch
 | ROS 2 / Python | ROS 2 Humble；启动脚本加载系统 ROS/Franka 环境，交互终端可用 `lerobot-vr` |
 | ALVR 配置备份 | `/home/landau/.local/state/real-exp-vr-backups/working-vr-20261025-133855` |
 
-左臂稳定运行时，`gello_software/ros2/src/franka_fr3_arm_controllers/config/controllers.yaml` 的 1 kHz 控制线程绑定 CPU 4；FR3 网卡 `enp114s0` 的中断绑定 CPU 5；网卡 RX ring 为 4096，CPU 性能档为 `performance`。双臂启动脚本把右臂实时控制线程单独移到 CPU 6，并要求 CPU 6 为 `performance`，以避免两条 1 kHz FCI 线程同绑 CPU 4。`/home/landau/franka_ros2_ws` 中的本机 Franka hardware 构建也包含恢复 libfranka 构造函数后 ROS 线程调度策略的修改。它们是**当前 client 的本机配置**；新机器只克隆本仓库并不能自动得到完全相同的系统环境。
+左臂稳定运行时，`gello_software/ros2/src/franka_fr3_arm_controllers/config/controllers.yaml` 的 1 kHz 控制线程绑定 CPU 4；FR3 网卡 `enp114s0` 的中断绑定 CPU 5；网卡 RX ring 为 4096，CPU 性能档为 `performance`。当前双臂入口仍沿用这份本机配置，双臂 FCI 的启动稳定性尚未确认。`/home/landau/franka_ros2_ws` 中的本机 Franka hardware 构建也包含恢复 libfranka 构造函数后 ROS 线程调度策略的修改。它们是**当前 client 的本机配置**；新机器只克隆本仓库并不能自动得到完全相同的系统环境。
 
 CPU 性能档、网卡接收环和 IRQ 绑定可能在重启后恢复默认值。以下为本机已验证设置；IRQ 编号从当前 `/proc/interrupts` 获取：
 
@@ -40,7 +40,7 @@ cd /home/landau/real-exp-vr
 sed -i 's/cpu_affinity: \[4,5\]/cpu_affinity: [4]/' \
   gello_software/ros2/src/franka_fr3_arm_controllers/config/controllers.yaml
 sudo powerprofilesctl set performance
-printf 'performance\n' | sudo tee /sys/devices/system/cpu/cpu{4,5,6}/cpufreq/scaling_governor
+printf 'performance\n' | sudo tee /sys/devices/system/cpu/cpu{4,5}/cpufreq/scaling_governor
 sudo ethtool -G enp114s0 rx 4096
 sudo systemctl stop irqbalance
 awk -F: '/enp114s0($|-)/ {gsub(/[[:space:]]/, "", $1); print $1}' /proc/interrupts |
@@ -122,7 +122,7 @@ bash scripts/start_quest3_hardware.sh --duo --enable-hardware
 - 2026-10-23：完成离线 IK、ROS 适配器和左臂真机前检查；早期网页预览、A/B 阶段报告仅代表当时的验证状态。
 - 2026-10-25：ALVR/SteamVR 连接、实体左 Touch 选择、Y 按键、真实左臂平移与旋转、第二次 Y 回位均由现场验证。FR3 通信稳定性改善包括本机调度修复、控制线程与网卡 IRQ 分核、RX ring 4096。
 - 2026-10-25：加入左／右／双臂选择，双手柄持续输入与左 Y 统一控制；完成 ROS 构建、无机器人连接的三模式脚本检查和离线双臂协调测试。右臂与双臂真机运动、回位、FCI 实时性尚待现场验证。
-- 2026-10-25：首次双臂现场试运行已能接管并回位，但跟随时明显卡顿。日志显示双手柄及关节实测约 30 Hz，而严格 IK 目标只有每侧约 1–6 Hz；回位无需 IK 时恢复到约 30 Hz。实时 IK 优化器收敛阈值调整为 `1e-6`，仍保留原有最终 FK 误差校验；双臂右侧 1 kHz 线程与左侧分核。两项修复完成离线检查，修复后的双臂现场效果待复测。
+- 2026-10-25：首次双臂现场试运行已能接管并回位，但跟随时明显卡顿。日志显示双手柄及关节实测约 30 Hz，而严格 IK 目标只有每侧约 1–6 Hz；回位无需 IK 时恢复到约 30 Hz。实时 IK 优化器收敛阈值调整为 `1e-6`，仍保留原有最终 FK 误差校验。右臂 1 kHz 线程单独固定 CPU 6 的一次现场试验仍出现启动期 FCI 通信反射，因此撤回该分核设置。IK 修复后的双臂动作流畅度待复测，FCI 启动期故障仍需定位。
 - 清理旧文件后运行当前 OpenVR、坐标映射、IK、Y 回位及 ROS 命令门控的相关测试，共 **52 个通过**；`--check-only` 无机器人连接检查通过。三轴相对旋转经过实际 IK 路径的离线检查，现场操作者随后确认动作流畅。
 
 ### 从离线预览到真机的关键变化
@@ -144,4 +144,4 @@ bash scripts/start_quest3_hardware.sh --duo --enable-hardware
 - `quest3_ros2/`：Quest ROS 2 适配器；与 GELLO ROS 工作区分开。
 - `lerobot/`、`gello_software/` 等为 Git 子仓库；首次检出时运行 `git submodule update --init --recursive`。
 
-`recordings/` 中的原始采样和机器人快照是实验数据。三模式运行时日志会在 `outputs/quest3_hardware/` 自动新建；历史日志清理不影响新会话，也不代表已有原始实验数据可删除。双臂 1 kHz FCI 线程分别使用 CPU 4 和 6；同时运行两臂的实时调度与网络时延仍须在真机现场观察。
+`recordings/` 中的原始采样和机器人快照是实验数据。三模式运行时日志会在 `outputs/quest3_hardware/` 自动新建；历史日志清理不影响新会话，也不代表已有原始实验数据可删除。双臂 FCI 启动期存在偶发通信反射；不要将一次启动成功视作稳定性验证。

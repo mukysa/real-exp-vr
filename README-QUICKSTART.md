@@ -9,7 +9,7 @@ cd /home/landau/real-exp-vr
 sed -i 's/cpu_affinity: \[4,5\]/cpu_affinity: [4]/' \
   gello_software/ros2/src/franka_fr3_arm_controllers/config/controllers.yaml
 sudo powerprofilesctl set performance
-printf 'performance\n' | sudo tee /sys/devices/system/cpu/cpu{4,5,6}/cpufreq/scaling_governor
+printf 'performance\n' | sudo tee /sys/devices/system/cpu/cpu{4,5}/cpufreq/scaling_governor
 sudo ethtool -G enp114s0 rx 4096
 sudo systemctl stop irqbalance
 awk -F: '/enp114s0($|-)/ {gsub(/[[:space:]]/, "", $1); print $1}' /proc/interrupts |
