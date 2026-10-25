@@ -43,7 +43,7 @@ def matrix_from_request(request):
 
 class ContinuousIK:
     def __init__(self, kinematics, limits=None, max_evaluations=80, timeout_s=None,
-                 tracking_mode='strict'):
+                 tracking_mode='strict', optimizer_tolerance=1e-12):
         self.kinematics = kinematics
         self.limits = limits or Limits.from_controller()
         if not np.array_equal(self.limits.lower, ARM_POSITION_LOWER_RAD) or not np.array_equal(self.limits.upper, ARM_POSITION_UPPER_RAD):
@@ -51,6 +51,9 @@ class ContinuousIK:
         if max_evaluations < 1 or (timeout_s is not None and (not np.isfinite(timeout_s) or timeout_s <= 0)):
             raise ValueError('Invalid solver budget')
         self.max_evaluations = max_evaluations
+        if not np.isfinite(optimizer_tolerance) or not 0 < optimizer_tolerance <= 1e-3:
+            raise ValueError('Invalid optimizer tolerance')
+        self.optimizer_tolerance = optimizer_tolerance
         self.timeout_s = timeout_s
         if tracking_mode not in {'strict', 'dexarena_velocity'}:
             raise ValueError('Unknown IK tracking mode')
@@ -192,7 +195,8 @@ class ContinuousIK:
                 else:
                     candidate = solve_fr3_ik(np.asarray(self.last.joints.positions_rad), desired,
                                          self.kinematics.tool, kinematics=self.kinematics,
-                                         try_alternative_seeds=False, max_function_evaluations=self.max_evaluations)
+                                         try_alternative_seeds=False, max_function_evaluations=self.max_evaluations,
+                                         optimizer_tolerance=self.optimizer_tolerance)
                     q = candidate.q
                     self.diagnostics['evaluations'] = candidate.function_evaluations
         except RuntimeError as exc:

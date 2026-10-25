@@ -1081,6 +1081,7 @@ def solve_fr3_ik(
     kinematics: Any | None = None,
     try_alternative_seeds: bool = True,
     max_function_evaluations: int = IK_MAX_FUNCTION_EVALUATIONS,
+    optimizer_tolerance: float = 1e-12,
     position_lower_rad: np.ndarray = ARM_POSITION_LOWER_RAD,
     position_upper_rad: np.ndarray = ARM_POSITION_UPPER_RAD,
 ) -> IkResult:
@@ -1099,6 +1100,8 @@ def solve_fr3_ik(
         raise ValueError("IK target and F_T_EE must be 4x4 transforms")
     if max_function_evaluations <= 0:
         raise ValueError("IK maximum function evaluations must be positive")
+    if not np.isfinite(optimizer_tolerance) or not 0 < optimizer_tolerance <= 1e-3:
+        raise ValueError("IK optimizer tolerance must be finite and in (0, 1e-3]")
     if (
         lower.shape != (7,)
         or upper.shape != (7,)
@@ -1163,9 +1166,9 @@ def solve_fr3_ik(
             bounds=(lower, upper),
             method="trf",
             max_nfev=max_function_evaluations,
-            ftol=1e-12,
-            xtol=1e-12,
-            gtol=1e-12,
+            ftol=optimizer_tolerance,
+            xtol=optimizer_tolerance,
+            gtol=optimizer_tolerance,
         )
         total_evaluations += int(solution.nfev)
         achieved = end_effector_pose(solution.x)

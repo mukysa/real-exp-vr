@@ -38,6 +38,11 @@ def _nodes(context):
     nodes.append(Node(
         package="franka_vr_adapter",
         executable="multi_live_ik_node",
+        additional_env={
+            "OPENBLAS_NUM_THREADS": "1",
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+        },
         parameters=[{
             "mode": mode,
             "position_scale": position_scale,

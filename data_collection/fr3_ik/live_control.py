@@ -59,6 +59,7 @@ class LeftLiveControl:
         relaxed_motion_gates: bool = False,
         max_source_translation_step_m: float = 0.15,
         max_source_rotation_step_rad: float = 0.75,
+        ik_optimizer_tolerance: float = 1e-12,
         world_from_base: np.ndarray | None = None,
     ) -> None:
         if not clock_id.strip():
@@ -114,7 +115,10 @@ class LeftLiveControl:
             "base_axes" if np.allclose(self.world_from_base, np.eye(4), atol=1e-12)
             else "tabletop_world_calibrated"
         )
-        self.solver = ContinuousIK(self.kin, limits=self.limits, max_evaluations=120)
+        self.solver = ContinuousIK(
+            self.kin, limits=self.limits, max_evaluations=120,
+            optimizer_tolerance=ik_optimizer_tolerance,
+        )
         self.shaper = PoseReferenceShaper(pose_shaper_bandwidth)
         self.button = DebouncedButtonEdge(0.15)
         self.button_initialized = False

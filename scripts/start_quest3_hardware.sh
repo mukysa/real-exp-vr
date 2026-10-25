@@ -66,6 +66,9 @@ set -u
 
 command -v ros2 >/dev/null
 command -v flock >/dev/null
+if [[ "${mode}" == "duo" ]]; then
+  command -v taskset >/dev/null || { echo "Error: taskset is required for dual FR3 CPU separation." >&2; exit 1; }
+fi
 controller_spawner="$(ros2 pkg prefix controller_manager)/lib/controller_manager/spawner"
 [[ -x "${controller_spawner}" ]] || { echo "Error: controller spawner missing" >&2; exit 1; }
 [[ "$(ros2 pkg prefix franka_fr3_arm_controllers)" == "${controller_install}"* ]]
@@ -76,6 +79,15 @@ if [[ "${action}" == "--check-only" ]]; then
   echo "CHECK OK: mode=${mode}; both Touch inputs, left Y, selected IK and adapters configured."
   echo "No robot connection was opened."
   exit 0
+fi
+
+if [[ "${mode}" == "duo" ]]; then
+  right_governor="$(cat /sys/devices/system/cpu/cpu6/cpufreq/scaling_governor 2>/dev/null || true)"
+  [[ "${right_governor}" == "performance" ]] || {
+    echo "Error: dual mode needs CPU 6 in performance mode before starting either FR3." >&2
+    echo "Run on client: printf 'performance\\n' | sudo tee /sys/devices/system/cpu/cpu6/cpufreq/scaling_governor" >&2
+    exit 1
+  }
 fi
 
 bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" --check-both-touch
@@ -128,6 +140,29 @@ require_hardware_alive() {
     }
   done
 }
+pin_right_realtime_thread() {
+  local deadline=$((SECONDS + 30)) manager_pid thread_id affinity
+  while ((SECONDS < deadline)); do
+    require_hardware_alive
+    manager_pid="$(pgrep -f '^/opt/ros/humble/lib/controller_manager/ros2_control_node .*__ns:=/right' | head -1 || true)"
+    if [[ -n "${manager_pid}" ]]; then
+      thread_id="$(ps -T -p "${manager_pid}" -o tid=,cls=,rtprio= | awk '$2 == "FF" && $3 == 98 {print $1; exit}')"
+      if [[ -n "${thread_id}" ]]; then
+        taskset -pc 6 "${thread_id}" >>"${log_dir}/cpu-affinity.log" 2>&1
+        affinity="$(taskset -pc "${thread_id}" 2>/dev/null || true)"
+        [[ "${affinity}" == *"current affinity list: 6" ]] || {
+          echo "Error: right FR3 realtime thread did not move to CPU 6." >&2
+          return 1
+        }
+        echo "Right FR3 1 kHz thread pinned to CPU 6; left remains on CPU 4."
+        return 0
+      fi
+    fi
+    sleep 0.05
+  done
+  echo "Error: right FR3 realtime thread was not found for CPU separation." >&2
+  return 1
+}
 wait_for_topic() {
   local topic="$1" deadline=$((SECONDS + 45))
   while ((SECONDS < deadline)); do
@@ -158,6 +193,9 @@ for side in "${sides[@]}"; do
     use_fake_hardware:=false fake_sensor_commands:=false \
     joint_sources:=joint_states joint_state_rate:=30 deployment_mode:=false
   hardware_pids+=("${children[${#children[@]}-1]}")
+  if [[ "${mode}" == "duo" && "${side}" == "right" ]]; then
+    pin_right_realtime_thread
+  fi
   wait_for_topic "/${side}/joint_states"
 done
 

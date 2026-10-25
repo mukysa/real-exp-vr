@@ -76,6 +76,7 @@ class MultiLiveIkNode(Node):
                 relaxed_motion_gates=True,
                 max_source_translation_step_m=2.0,
                 max_source_rotation_step_rad=np.pi,
+                ik_optimizer_tolerance=1e-6,
                 world_from_base=calibrations[side],
             )
             for side in self.sides

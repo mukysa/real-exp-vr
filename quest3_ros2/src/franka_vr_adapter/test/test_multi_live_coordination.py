@@ -28,7 +28,6 @@ class Subscription:
 
 
 def rig():
-    base = time.monotonic() - 0.5
     sides = ("left", "right")
     cores = {
         side: LeftLiveControl(
@@ -38,6 +37,7 @@ def rig():
             relaxed_motion_gates=True,
         ) for side in sides
     }
+    base = time.monotonic() - 0.5
     outputs = []
     harness = SimpleNamespace(
         mode="duo", cores=cores, input_timeout_s=2.0,
