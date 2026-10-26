@@ -4,28 +4,30 @@ set -euo pipefail
 # Start the robot-control side of a split data-collection setup.
 # Cameras, the ROS bridge, and the LeRobot recorder run on the data server;
 # this host runs only GELLO/Franka teleoperation and robot control.
-# Usage: ./scripts/start_data_collection_client.sh --duo|--left|--right --arm|--gripper|--hand
+# Usage: ./scripts/start_data_collection_client.sh --duo|--left|--right --arm|--gripper|--hand [--teleop-source gello|quest] [--check-only|--enable-hardware]
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ "$#" -eq 1 && "$1" == "--help" ]]; then
   cat <<'EOF'
-Usage: ./scripts/start_data_collection_client.sh --duo|--left|--right --arm|--gripper|--hand
+Usage: ./scripts/start_data_collection_client.sh --duo|--left|--right --arm|--gripper|--hand [--teleop-source gello|quest] [--check-only|--enable-hardware]
+
+Quest currently supports only --left --arm and requires --check-only or
+--enable-hardware. GELLO remains the default.
 
 Starts only the control-host teleoperation stack. On the data server run:
-  ./scripts/start_data_collection_server.sh --duo|--left|--right --arm|--gripper|--hand
+  ./scripts/start_data_collection_server.sh --duo|--left|--right --arm|--gripper|--hand [--teleop-source gello|quest] [--record]
 EOF
   exit 0
 fi
 
-[[ "$#" -eq 2 ]] || {
-  echo "Usage: $0 --duo|--left|--right --arm|--gripper|--hand" >&2
-  exit 2
-}
-
 arm_mode=""
 data_mode=""
-for argument in "$@"; do
+teleop_source="gello"
+quest_action=""
+while [[ "$#" -gt 0 ]]; do
+  argument="$1"
+  shift
   case "${argument}" in
     --duo|--left|--right|--single)
       [[ -z "${arm_mode}" ]] || { echo "choose only one arm mode" >&2; exit 2; }
@@ -35,10 +37,34 @@ for argument in "$@"; do
       [[ -z "${data_mode}" ]] || { echo "choose only one data mode" >&2; exit 2; }
       data_mode="${argument#--}"
       [[ "${data_mode}" != "no-gripper" ]] || data_mode="arm" ;;
+    --teleop-source)
+      [[ "$#" -gt 0 ]] || { echo "--teleop-source requires gello or quest" >&2; exit 2; }
+      teleop_source="$1"; shift ;;
+    --check-only|--enable-hardware)
+      [[ -z "${quest_action}" ]] || { echo "choose only one hardware action" >&2; exit 2; }
+      quest_action="${argument}" ;;
     *) echo "unknown argument: ${argument}" >&2; exit 2 ;;
   esac
 done
 [[ -n "${arm_mode}" && -n "${data_mode}" ]] || { echo "both arm and data modes are required" >&2; exit 2; }
+
+case "${teleop_source}" in
+  gello|quest) ;;
+  *) echo "unsupported teleop source: ${teleop_source}" >&2; exit 2 ;;
+esac
+if [[ "${teleop_source}" == "quest" ]]; then
+  [[ "${arm_mode}" == "left" && "${data_mode}" == "arm" ]] || {
+    echo "Quest collection currently supports only --left --arm" >&2; exit 2;
+  }
+  [[ -n "${quest_action}" ]] || {
+    echo "Quest requires --check-only or explicit --enable-hardware" >&2; exit 2;
+  }
+  export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+  export ROS_LOCALHOST_ONLY=0
+  export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+  exec bash "${script_dir}/start_quest3_hardware.sh" --left "${quest_action}"
+fi
+[[ -z "${quest_action}" ]] || { echo "hardware action flags require --teleop-source quest" >&2; exit 2; }
 
 echo "Starting control-host teleoperation only."
 echo "Run scripts/start_data_collection_server.sh on 192.168.50.13 for cameras and recording."

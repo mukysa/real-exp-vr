@@ -28,6 +28,7 @@ Required:
   --hand                Include 20-joint Wuji hand current and target angles.
 
 Options:
+  --teleop-source SOURCE Input source: gello (default) or quest (left arm-only).
   --record              Start the LeRobot recorder on this server.
   --local-dir PATH      Dataset directory for --record (default: ./lerobot_data).
   --repo-id ID          LeRobot repo id for --record.
@@ -50,7 +51,8 @@ arm_mode=""
 gripper_mode=""
 record=0
 local_dir="./lerobot_data"
-repo_id="local/franka_gello_teleop"
+repo_id=""
+teleop_source="gello"
 bridge_host="${DATA_COLLECTION_SERVER_IP:-192.168.50.13}"
 bridge_port="5555"
 hand_telemetry_port="${HAND_TELEMETRY_PORT:-5558}"
@@ -71,6 +73,9 @@ while [[ "$#" -gt 0 ]]; do
       [[ "${gripper_mode}" != "no-gripper" ]] || gripper_mode="arm"
       shift
       ;;
+    --teleop-source)
+      [[ "$#" -ge 2 ]] || die "--teleop-source requires gello or quest"
+      teleop_source="$2"; shift 2 ;;
     --record) record=1; shift ;;
     --local-dir)
       [[ "$#" -ge 2 ]] || die "--local-dir requires a path"
@@ -99,6 +104,17 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 [[ -n "${arm_mode}" && -n "${gripper_mode}" ]] || { usage >&2; exit 2; }
+
+case "${teleop_source}" in
+  gello|quest) ;;
+  *) die "unsupported teleop source: ${teleop_source}" ;;
+esac
+if [[ "${teleop_source}" == "quest" ]]; then
+  [[ "${arm_mode}" == "left" && "${gripper_mode}" == "arm" ]] || die "Quest collection currently supports only --left --arm"
+  repo_id="${repo_id:-local/franka_quest_left_teleop}"
+else
+  repo_id="${repo_id:-local/franka_gello_teleop}"
+fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd -- "${script_dir}/.." && pwd)"
@@ -200,6 +216,9 @@ case "${arm_mode}" in
   right|duo) config_file="example_${arm_mode}.yaml" ;;
   *) die "unsupported arm mode: ${arm_mode}" ;;
 esac
+if [[ "${teleop_source}" == "quest" ]]; then
+  config_file="${repository_root}/config/data_collection/quest_left.yaml"
+fi
 declare -a child_pids=()
 declare -A child_names=()
 shutdown_started=0
@@ -266,7 +285,7 @@ trap shutdown EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-echo "Data-server mode: ${arm_mode}; ROS: ${ros_distro}; bridge: tcp://${bridge_host}:${bridge_port}"
+echo "Data-server mode: ${arm_mode}; teleop source: ${teleop_source}; ROS: ${ros_distro}; bridge: tcp://${bridge_host}:${bridge_port}"
 
 start_process "RealSense camera publisher" \
   ros2 launch franka_realsense_camera_publisher cameras.launch.py
@@ -280,11 +299,15 @@ start_process "LeRobot data bridge" \
   "hand_telemetry_host:=${bridge_host}" "hand_telemetry_port:=${hand_telemetry_port}"
 
 required_bridge_topics=()
-if [[ "${arm_mode}" == "duo" || "${arm_mode}" == "left" ]]; then
-  required_bridge_topics+=("/left/joint_states" "/left/gello/raw_joint_states" "/left/gello/accepted_joint_states")
-fi
-if [[ "${arm_mode}" == "duo" || "${arm_mode}" == "right" ]]; then
-  required_bridge_topics+=("/right/joint_states" "/right/gello/raw_joint_states" "/right/gello/accepted_joint_states")
+if [[ "${teleop_source}" == "quest" ]]; then
+  required_bridge_topics=("/left/joint_states")
+else
+  if [[ "${arm_mode}" == "duo" || "${arm_mode}" == "left" ]]; then
+    required_bridge_topics+=("/left/joint_states" "/left/gello/raw_joint_states" "/left/gello/accepted_joint_states")
+  fi
+  if [[ "${arm_mode}" == "duo" || "${arm_mode}" == "right" ]]; then
+    required_bridge_topics+=("/right/joint_states" "/right/gello/raw_joint_states" "/right/gello/accepted_joint_states")
+  fi
 fi
 for topic in "${required_bridge_topics[@]}"; do
   if ! timeout 10s ros2 topic echo \
@@ -294,6 +317,27 @@ for topic in "${required_bridge_topics[@]}"; do
   fi
   echo "Ready: ${topic} is publishing on the data server"
 done
+
+if [[ "${teleop_source}" == "quest" ]]; then
+  # READY has no accepted targets yet. Allow the operator time to press Y.
+  echo "Waiting for left VR inputs. Once client is READY, press left Y to follow."
+  quest_topics=(
+    "/left/vr/source_status|std_msgs/msg/String"
+    "/left/vr/status|std_msgs/msg/String"
+    "/left/franka_robot_state_broadcaster/robot_state|franka_msgs/msg/FrankaRobotState"
+    "/cameras/cam_left/image_raw|sensor_msgs/msg/Image"
+    "/cameras/cam_front/image_raw|sensor_msgs/msg/Image"
+    "/left/vr/accepted_joint_states|sensor_msgs/msg/JointState"
+  )
+  for entry in "${quest_topics[@]}"; do
+    topic="${entry%|*}"
+    message_type="${entry#*|}"
+    if ! timeout 120s ros2 topic echo "${topic}" "${message_type}" --once --no-daemon >/dev/null 2>&1; then
+      die "no payload from ${topic}; for accepted targets ensure client is FOLLOWING after left Y; otherwise check DDS and publishers"
+    fi
+    echo "Ready: ${topic} is publishing on the data server"
+  done
+fi
 
 if [[ "${record}" -eq 1 ]]; then
   start_process "LeRobot recorder" \

@@ -33,7 +33,7 @@ env -u WAYLAND_DISPLAY DISPLAY=:0 ./tools/alvr-v20.14.1/bin/alvr_dashboard
 env -u WAYLAND_DISPLAY DISPLAY=:0 /home/landau/.local/share/Steam/steam.sh -applaunch 250820
 ```
 
-戴上 Quest，打开 ALVR 20.14.1，连接电脑，保持 `Streaming`，握住两只实体 Touch 手柄。关闭 Quest 系统菜单，使 ALVR 保持前台。三种模式都会先检查并持续读取双手柄；实体左手柄 Y 是唯一接管／回位键。
+戴上 Quest，打开 ALVR 20.14.1，通过 WiFi 连接电脑，保持 `Streaming`，握住并抬起两只实体 Touch 手柄，使两只手柄都处于头显可追踪范围内；即使只控制左臂也需要如此。仅显示 `Streaming` 不代表手柄追踪有效，未抬起两只手柄时可能出现 `0/30 valid OpenVR poses`。关闭 Quest 系统菜单，使 ALVR 保持前台。三种模式都会先检查并持续读取双手柄；实体左手柄 Y 是唯一接管／回位键。
 
 ## 3. 选择机械臂并启动
 
@@ -49,19 +49,28 @@ conda activate lerobot-vr
 左臂：
 
 ```bash
-bash scripts/start_quest3_hardware.sh --left --enable-hardware
+env -u CYCLONEDDS_URI \
+  RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+  ROS_DOMAIN_ID=0 \
+  bash scripts/start_quest3_hardware.sh --left --enable-hardware
 ```
 
 右臂：
 
 ```bash
-bash scripts/start_quest3_hardware.sh --right --enable-hardware
+env -u CYCLONEDDS_URI \
+  RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+  ROS_DOMAIN_ID=0 \
+  bash scripts/start_quest3_hardware.sh --right --enable-hardware
 ```
 
 双臂：
 
 ```bash
-bash scripts/start_quest3_hardware.sh --duo --enable-hardware
+env -u CYCLONEDDS_URI \
+  RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+  ROS_DOMAIN_ID=0 \
+  bash scripts/start_quest3_hardware.sh --duo --enable-hardware
 ```
 
 脚本先报告左右实体 Touch 均为 `30/30 valid OpenVR poses`，再启动所选机械臂。等待 `Hardware chain ready` 和所选侧的 `LEFT_SOURCE_STATUS`／`RIGHT_SOURCE_STATUS` 显示 `"state":"READY"`；双臂模式必须**两侧都 READY**，此时才按左 Y。
@@ -71,3 +80,35 @@ bash scripts/start_quest3_hardware.sh --duo --enable-hardware
 ## 4. 结束
 
 在真机启动终端按 `Ctrl+C`，等待 `Stopped`；再关闭 FCI、SteamVR 和 ALVR Dashboard。
+
+## 5. 左臂 VR 数采入口（入口已实现，跨机采集待验收）
+
+完成上述性能和 VR 准备后，可用统一数采 client 入口替代第 3 节的启动命令；两者只启动一个。首版仅支持 Quest 左臂 arm-only，仍需两只 Touch 有效追踪。
+
+先做离线配置检查（不连接机器人）：
+
+```bash
+bash scripts/start_data_collection_client.sh --teleop-source quest --left --arm --check-only
+```
+
+client 真机启动，沿用第 3 节已验证的 DDS 环境：
+
+```bash
+env -u CYCLONEDDS_URI RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 \
+  bash scripts/start_data_collection_client.sh \
+  --teleop-source quest --left --arm --enable-hardware
+```
+
+server 更新主仓库与 gello_software 子仓库后，需要重新构建 server ROS 包（新增了 bridge 的 teleop_source 参数）：
+
+```bash
+bash scripts/build_data_collection_server.sh
+bash scripts/start_data_collection_server.sh \
+  --teleop-source quest --left --arm
+```
+
+server 使用 `config/data_collection/quest_left.yaml`，只要求左臂和 cam_left / cam_front；action 来源为 `/left/vr/accepted_joint_states`。等 client READY 后按左 Y 进入跟随，server 才能收到 accepted target；Quest 额外话题各等待最多 120 秒。该检查验证收到消息，FOLLOWING 录制门控和跨机同步验收属于后续步骤。
+
+后续跨机及录制边界验收时可添加 `--record --local-dir ./lerobot_data/quest_left`；默认 repo id 为 `local/franka_quest_left_teleop`，动作元数据记录 `teleop_source: quest`。当前尚未实现回位／故障自动切断 episode，请勿把入口检查通过视为训练数据验收通过。
+
+省略 `--teleop-source` 继续使用原 GELLO 模式。

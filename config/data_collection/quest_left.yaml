@@ -1,0 +1,30 @@
+lerobot_data_bridge:
+  ros__parameters:
+    sample_rate_hz: 15.0
+    max_data_age_sec: 0.5
+    publish_host: "127.0.0.1"
+    publish_port: 5555
+    teleop_source: "quest"
+    task_name: "franka_quest_left_teleop"
+    include_gripper: false
+    include_hand: false
+    hand_telemetry_host: "0.0.0.0"
+    hand_telemetry_port: 5558
+    include_right_arm: false
+    arm_mode: "left"
+    arm_action_source: "topic"
+
+    left_robot_joint_state_topic: "/left/joint_states"
+    left_arm_action_topic: "/left/vr/accepted_joint_states"
+    left_robot_gripper_state_topic: "/left/franka_gripper/joint_states"
+    left_gripper_action_topic: "/left/gripper/gripper_client/target_gripper_width_percent"
+
+    camera_1_enabled: true
+    camera_1_name: "cam_left"
+    camera_1_topic: "/cameras/cam_left/image_raw"
+    camera_2_enabled: true
+    camera_2_name: "cam_front"
+    camera_2_topic: "/cameras/cam_front/image_raw"
+    camera_3_enabled: false
+    camera_3_name: "cam_right"
+    camera_3_topic: "/cameras/cam_right/image_raw"

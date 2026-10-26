@@ -332,6 +332,7 @@ def action_config_from_packet(packet: dict[str, Any]) -> dict[str, Any]:
     }.get(gripper_action_representation, gripper_action_representation)
     arm_mode = trajectory_config_from_packet(packet)["arm_mode"]
     return {
+        **({"teleop_source": packet["teleop_source"]} if packet.get("teleop_source", "gello") != "gello" else {}),
         "arm_action_representation": arm_action_representation,
         "arm_action_definition": arm_action_definition,
         "gripper_action_representation": gripper_action_representation,

@@ -106,10 +106,15 @@ flock -n 9 || { echo "Error: another GELLO/Quest launcher holds the lock." >&2; 
 log_dir="${repository_root}/outputs/quest3_hardware/$(date +%Y%m%d-%H%M%S)-${mode}"
 mkdir -p "${log_dir}"
 children=()
+topic_probe_pid=""
 hardware_pids=()
 declare -A hardware_side_by_pid
 cleanup() {
   trap - EXIT INT TERM
+  if [[ -n "${topic_probe_pid}" ]]; then
+    kill "${topic_probe_pid}" 2>/dev/null || true
+    wait "${topic_probe_pid}" 2>/dev/null || true
+  fi
   for pid in "${children[@]}"; do kill -TERM -- "-${pid}" 2>/dev/null || true; done
   for pid in "${children[@]}"; do wait "${pid}" 2>/dev/null || true; done
   echo "Stopped. FR3 command watchdogs no longer receive targets. Logs: ${log_dir}"
@@ -134,14 +139,32 @@ require_hardware_alive() {
   done
 }
 wait_for_topic() {
-  local topic="$1" deadline=$((SECONDS + 45))
-  while ((SECONDS < deadline)); do
-    require_hardware_alive
-    if timeout 3s ros2 topic echo "${topic}" --once --no-daemon >/dev/null 2>&1; then return 0; fi
+  local topic="$1" message_type="$2"
+  local probe_log="${log_dir}/wait-${topic//\//_}.log"
+  # Keep one subscriber alive for discovery and reception; restarting every
+  # three seconds can repeatedly discard DDS discovery progress.
+  timeout 45s ros2 topic echo "${topic}" "${message_type}" \
+    --once --no-daemon >"${probe_log}" 2>&1 &
+  local probe_pid=$!
+  topic_probe_pid="${probe_pid}"
+  while kill -0 "${probe_pid}" 2>/dev/null; do
+    if ! require_hardware_alive; then
+      kill "${probe_pid}" 2>/dev/null || true
+      wait "${probe_pid}" 2>/dev/null || true
+      return 1
+    fi
+    sleep 0.2
   done
-  echo "Error: timed out waiting for ${topic}; logs: ${log_dir}" >&2
+  if wait "${probe_pid}"; then
+    topic_probe_pid=""
+    return 0
+  fi
+  topic_probe_pid=""
+  echo "Error: failed waiting for ${topic}; diagnostic: ${probe_log}" >&2
+  tail -15 "${probe_log}" >&2
   return 1
 }
+
 wait_for_port() {
   local port="$1" deadline=$((SECONDS + 30))
   while ((SECONDS < deadline)); do
@@ -164,7 +187,7 @@ for side in "${sides[@]}"; do
     joint_sources:=joint_states joint_state_rate:=30 deployment_mode:=false
   hardware_pids+=("${children[${#children[@]}-1]}")
   hardware_side_by_pid["${children[${#children[@]}-1]}"]="${side}"
-  wait_for_topic "/${side}/joint_states"
+  wait_for_topic "/${side}/joint_states" sensor_msgs/msg/JointState
 done
 
 for side in "${sides[@]}"; do
@@ -197,8 +220,8 @@ start_process quest_control ros2 launch franka_vr_adapter quest_live_control.lau
   mode:="${mode}" trace_dir:="${log_dir}" position_scale:=1.0 max_tcp_offset_m:=0.0
 wait_for_port 8001
 for side in "${sides[@]}"; do
-  wait_for_topic "/${side}/vr/source_status"
-  wait_for_topic "/${side}/vr/status"
+  wait_for_topic "/${side}/vr/source_status" std_msgs/msg/String
+  wait_for_topic "/${side}/vr/status" std_msgs/msg/String
 done
 
 echo "Hardware chain ready: ${mode}. Left Y takes over selected arm(s); second Y returns."
