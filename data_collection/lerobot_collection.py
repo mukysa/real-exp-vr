@@ -100,10 +100,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--host",
-        default=os.environ.get("DATA_COLLECTION_SERVER_IP", "192.168.50.13"),
+        default=os.environ.get("DATA_COLLECTION_SERVER_IP", "192.168.52.160"),
         help=(
             "ZMQ host used by the ROS 2 bridge (default: DATA_COLLECTION_SERVER_IP "
-            "or 192.168.50.13)."
+            "or 192.168.52.160)."
         ),
     )
     parser.add_argument("--port", type=int, default=5555, help="ZMQ port used by the ROS 2 bridge.")

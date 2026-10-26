@@ -67,7 +67,7 @@ fi
 [[ -z "${quest_action}" ]] || { echo "hardware action flags require --teleop-source quest" >&2; exit 2; }
 
 echo "Starting control-host teleoperation only."
-echo "Run scripts/start_data_collection_server.sh on 192.168.50.13 for cameras and recording."
+echo "Run scripts/start_data_collection_server.sh on 192.168.52.160 for cameras and recording."
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export ROS_LOCALHOST_ONLY=0
 export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
@@ -95,7 +95,7 @@ elif [[ "${data_mode}" == "arm" ]]; then
   exec "${teleop_launcher}" --arm "${arm_side}"
 fi
 
-server_host="${DATA_COLLECTION_SERVER_IP:-192.168.50.13}"
+server_host="${DATA_COLLECTION_SERVER_IP:-192.168.52.160}"
 telemetry_port="${HAND_TELEMETRY_PORT:-5558}"
 exec "${teleop_launcher}" --hand "${arm_side}" \
   --telemetry-host "${server_host}" --telemetry-port "${telemetry_port}"

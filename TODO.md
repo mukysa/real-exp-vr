@@ -4,15 +4,15 @@
 
 **主线目标：用 Quest 3 VR 遥操替代 GELLO 输入，完成 robot-control client 与 data server 的通信，采集可验证、可回放、可用于训练的 LeRobot episode。**
 
-本文是后续工作计划，未勾选条目均未验收。文中的性能指标和验收数量是建议目标，不是当前实测结果；标注“拟新增”的参数、配置和接口尚未实现。本次编写仅核查本地代码与既有日志，未登录 server 或启动真机。
+本文区分已完成的代码、现场验证与待验收工作。文中的性能指标和验收数量是建议目标，不是当前实测结果；标注“拟新增”的参数、配置和接口尚未实现。2026-10-26 的左臂接管和 server 同步结果依据用户现场操作反馈及终端输出记录，不代表跨机采集已验收。
 
 ## 当前左臂实施主线
 
-1. **完成左臂入口与配置接线（本地已实现）：** client/server 支持 `--teleop-source quest --left --arm`；client 复用现有 VR 启动与显式硬件启用，server 使用主仓库 Quest 配置、检查左臂 VR 话题，保存输入源标识。右臂／双臂／夹爪暂不开放。部署时需同步 gello_software 的 bridge 参数变更并重建 server。
+1. **完成左臂入口与配置接线（左臂 M1 已验证）：** client/server 支持 `--teleop-source quest --left --arm`；client 复用现有 VR 启动与显式硬件启用，server 使用主仓库 Quest 配置、检查左臂 VR 话题，保存输入源标识。右臂／双臂／夹爪暂不开放。server 源码及子模块已同步；server 重新构建与运行验证留到 M2。
 2. **验证 server 收到完整样本（待验收）：** 核对远端环境和 DDS，收到左臂状态、accepted action、VR 状态及两路图像，生成有效 schema-v2 包。
 3. **补齐录制边界，采真实 episode（待实现／验收）：** FOLLOWING 门控、回位／故障边界、清空跨段配对，再做数据校验、loader 和回放 dry-run。
 
-本地验证：新增入口／配置／来源元数据 13 项测试通过；左臂统一入口 `--check-only` 通过，未连接机器人。扩展测试另有 4 项通过、3 项因缺少本地测试数据集元数据失败；原 recorder 两项测试在修改前 HEAD 上同样失败。server 跨机与真机 episode 尚未验收。
+本地验证：新增入口／配置／来源元数据 13 项测试通过；左臂统一入口 `--check-only` 通过；随后真机启动到 `Hardware chain ready`，用户确认一次 Y 接管成功，并 Ctrl+C 正常退出。扩展测试另有 4 项通过、3 项因缺少本地测试数据集元数据失败；原 recorder 两项测试在修改前 HEAD 上同样失败。server 跨机与真机 episode 尚未验收。
 
 第一步的入口就绪检查仅验证收到消息；不代表 FOLLOWING 门控、跨机同步或真实 episode 已验收。具体使用见 README-QUICKSTART 第 5 节。
 
@@ -23,9 +23,9 @@
 | Quest 输入 | 双实体 Touch、OpenVR 位姿、左 Y 统一接管／回位 | 输入时延、丢帧和追踪丢失的连续统计 |
 | 左臂遥操 | 已现场验证六自由度跟随、回位、再次接管 | 重复启动与长时间稳定性；单臂日志仍有 FCI 通信故障 |
 | 右臂／双臂 | 三模式入口、独立适配器、共同就绪与故障联动；已有双臂现场试运行 | 优化后流畅度、双侧回位完成和完整循环验收 |
-| client 采集入口 | 已有 GELLO/FR3 启动封装 | 当前仍调用 GELLO supervisor，未接入 Quest 采集模式 |
-| server 采集入口 | RealSense、ROS bridge、ZMQ、LeRobot recorder 均有实现 | 默认动作话题仍为 GELLO accepted targets，需增加 VR 配置与联调 |
-| 数据格式 | schema-v2、多臂选择、关节／末端表示、校验与回放工具 | VR 来源标识、会话状态、录制边界及端到端采集验收 |
+| client 采集入口 | Quest 左臂 arm-only 分支已通过离线检查、真机启动及一次 Y 接管 | 重复接管循环和长期稳定性 |
+| server 采集入口 | Quest 左臂配置与就绪检查已实现并同步到 server，help 已确认 | 本机重建、环境核对、跨机接收与样本联调 |
+| 数据格式 | schema-v2、关节／末端表示、校验与回放工具；Quest 来源标识已实现并离线测试 | 会话状态、录制边界及端到端采集验收 |
 
 基线证据：
 
@@ -45,7 +45,7 @@ Quest 3 → ALVR / SteamVR / OpenVR
                   实测状态 + 控制器 accepted targets
                               │ ROS 2 DDS，跨机
                               ▼
-server：192.168.50.13，现有文档约定 ROS 2 Jazzy
+server：192.168.52.160，现有文档约定 ROS 2 Jazzy
 RealSense 图像 + 机器人状态／动作 → ROS 数据 bridge
                               → ZMQ :5555 → LeRobot recorder
                               → episode / Parquet / 视频 / 元数据
@@ -61,15 +61,29 @@ RealSense 图像 + 机器人状态／动作 → ROS 数据 bridge
 
 ## 3. P0 主线：VR 替代 GELLO，完成跨机通信与采集
 
-### M1 — 接入 VR 采集模式与话题契约（现在可开发，离线可验证）
+### M1 — 接入 VR 采集模式与话题契约（左臂范围已完成并验证）
 
-- [ ] 在 client/server 采集入口中拟新增统一的输入源选择参数，例如 --teleop-source gello|quest；保留现有 GELLO 调用兼容性。
-- [ ] client 的 Quest 分支调用现有 start_quest3_hardware.sh，传递 left/right/duo 模式；首版仅支持 arm-only，明确拒绝尚未实现的 Quest gripper/hand 组合。
-- [ ] Quest 分支不要求 GELLO USB 别名、不启动 GELLO publisher；继续复用单实例锁、重复 FR3 控制进程检查、清理逻辑及硬件显式启用约定。
-- [ ] 新增左／右／双臂 Quest bridge 配置。优先在主仓库保存配置并利用 bridge 已支持的绝对配置路径，避免只改本机安装产物。
-- [ ] server 根据输入源选择 action topic，并同时修改启动就绪检查；不能出现配置订阅 VR、预检查仍等待 GELLO 的情况。
-- [ ] 为 Quest 配置设置明确的任务名、数据集默认名称和 teleop_source 元数据，避免新数据仍被标记为 franka_gello_teleop。
-- [ ] 增加三模式配置测试、输入源路由测试，以及无 GELLO 设备时的离线启动检查。
+本轮范围限定为 `quest + left + arm`。右臂／双臂／夹爪／hand 扩展移至 M4，不作为左臂 M1 完成条件。
+
+- [x] client/server 支持 `--teleop-source gello|quest`；默认保留 GELLO 路由。
+- [x] client Quest 分支调用现有 `start_quest3_hardware.sh --left`；明确拒绝右臂、双臂及 gripper/hand 组合。
+- [x] Quest 分支不依赖 GELLO USB 或 publisher，复用单实例锁、进程检查、清理和显式 `--enable-hardware`；支持 `--check-only`。
+- [x] 主仓库新增 `config/data_collection/quest_left.yaml`，通过绝对路径加载；关闭右臂、夹爪、hand 和第三路相机的数据依赖。
+- [x] server Quest 配置与启动检查均使用 VR accepted topic，不等待 GELLO 话题；额外检查左臂 FrankaRobotState、VR 状态和两路图像。此项为代码完成，跨机实际接收归 M2。
+- [x] 配置 Quest 任务名、默认 repo id，以及 bridge 数据包和 recorder 动作元数据中的 `teleop_source`。
+- [x] 13 项入口路由、非法组合拒绝、左臂配置和来源元数据测试通过；实际 `--check-only` 通过。
+- [x] 修复启动探测每 3 秒重建订阅的问题：改为明确消息类型、持续等待最多 45 秒并保留诊断日志。
+- [x] 新入口真机启动成功，用户确认一次 Y 接管，并正常退出。未据此认定回位再接管完整循环或长期稳定性通过。
+- [x] Git bundle 同步到 server，主仓库／子模块提交、配置文件和入口 help 均已核对。
+
+验证记录：
+
+- 首次失败日志：`outputs/quest3_hardware/20261026-170331-left/hardware-left.log`；硬件及 broadcaster 已激活，但等待 joint_states 超时。更改订阅等待方式后重试成功；未单独证明超时的唯一根因。
+- 成功启动日志目录：`outputs/quest3_hardware/20261026-171106-left`；终端显示 `Hardware chain ready: left`，用户确认 Y 接管成功。
+- server `/home/pair1/real-exp-vr`：分支 `server/quest-left`，主仓库 `2acc5a1`，gello_software `135d3bf`，lerobot `4eecbad`；子模块与主仓库记录一致。以上是首次迁移检查点，不包含后续文档修改。
+- server 地址：`192.168.52.160`。离线迁移方法见 [SERVER-OFFLINE-SYNC.md](SERVER-OFFLINE-SYNC.md)。M1 检查点仍使用旧默认地址；本轮 M2 已更新 split collection 默认值，部署时仍建议显式传 `--bridge-host 192.168.52.160`。
+- 测试限制：扩展测试 3 项因缺少数据集元数据失败；原 recorder 2 项测试在修改前 HEAD 上同样失败，未作为本轮通过项。
+
 
 | 数据 | client 来源 / server 订阅 | 用途 |
 |---|---|---|
@@ -80,13 +94,23 @@ RealSense 图像 + 机器人状态／动作 → ROS 数据 bridge
 | 适配器状态 | /<side>/vr/status | 记录 STOP 与拒绝原因 |
 | server 本地图像 | /cameras/<camera_name>/image_raw | observation.images.* |
 
-**验收：** 选 Quest 时，client 不触发 GELLO 设备依赖，server 配置及就绪检查均指向所选侧 VR accepted topic；非所选臂不成为必需输入。拟新增参数有 help、失败提示和测试。
+**验收：** 选 Quest 时，client 不触发 GELLO 设备依赖，server 配置及就绪检查均指向所选侧 VR accepted topic；非所选臂不成为必需输入。已实现参数有 help、失败提示和测试。左臂入口验收已通过；server 运行时契约由 M2 进一步验证。
 
 涉及入口：[client supervisor](scripts/start_data_collection_client.sh)、[server supervisor](scripts/start_data_collection_server.sh)、[Quest 真机入口](scripts/start_quest3_hardware.sh)、[VR topic 配置](quest3_ros2/src/franka_vr_adapter/config/vr_controller.yaml)、[bridge launch](gello_software/ros2/src/franka_lerobot_data_bridge/launch/bridge.launch.py)。
 
 ### M2 — client/server 通信与同步验收（需两机；可先用隔离测试话题）
 
-- [ ] 核对 server 实际 checkout、子仓库版本、构建路径、ROS/RMW 和 franka_msgs 版本；不要仅凭本机文件判断远端部署状态。
+**本机开发与隔离验证已完成一轮（2026-10-26），两机 M2 未验收。** 工具与操作步骤见 [M2-VALIDATION.md](M2-VALIDATION.md)。
+
+- [x] 新增环境 JSON 报告、并行只读话题探测、ZMQ schema-v2／频率／时间戳质量报告工具。
+- [x] bridge 增加 action 时间戳、状态动作时间差、拒绝回调计数；collection 模式拒绝非法／未来输入时间戳。
+- [x] 新增 domain 173、/m2 命名空间隔离合成测试；正常链路、动作／状态／相机断流、超前 5 秒时间戳五种情形通过。
+- [x] 完整 schema 审计 121 包全部有效，合成链路约 15.002 Hz；22 项诊断及入口单元测试通过。这些数字不代表真实跨机性能。
+- [x] split collection 默认 server 地址更新为 192.168.52.160；server 等待话题期间增加子进程退出检查及探测日志。
+
+
+- [x] 根据 server 实际终端输出核对 checkout 和子仓库版本（见 M1 迁移检查点）。
+- [ ] 核对 server 构建路径、ROS/RMW 和 franka_msgs 版本，重新构建并验证加载的安装产物；源码同步不能替代部署验收。
 - [ ] 检查相同 ROS_DOMAIN_ID、可达网卡、DDS 发现配置及 QoS；逐项验证 JointState、FrankaRobotState 和状态字符串跨机实际收到消息。
 - [ ] server 启动预检查覆盖实测关节、accepted action、FrankaRobotState、所选相机和遥操状态；区分“等待 Y 接管产生首个目标”与“通信失败”。
 - [ ] 在独立 ROS_DOMAIN_ID／测试命名空间用录制样本或合成数据验证通信，不向真机 raw-command topic 注入测试目标。
@@ -169,4 +193,4 @@ RealSense 图像 + 机器人状态／动作 → ROS 数据 bridge
 
 **主线完成标准：** 无 GELLO 输入设备，Quest 控制所选 FR3；client 数据真实到达 server；server 同步采集图像、实测状态和控制器接受的动作；episode 可开始、保存、丢弃和异常结束；产物通过校验、训练 loader 读取和回放检查；左／右／双臂分别有验收记录。夹爪抓取采集作为后续单独验收项。
 
-**下一项最小可执行任务：** 实现 M1 的 Quest 输入源选择和左臂 arm-only bridge 配置，同时补齐 server 就绪检查；随后完成一条跨机 schema-v2 有效样本链路，再推进首个真实 episode。
+**下一项最小可执行任务：** 在本机开发 M2 的环境诊断、隔离样本与采集质量报告工具，离线验证后通过 bundle 同步到 server；核对环境并重建，验证一条跨机 schema-v2 有效样本链路，再推进 M3 录制边界与首个真实 episode。

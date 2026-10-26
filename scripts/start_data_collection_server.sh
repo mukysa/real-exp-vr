@@ -33,7 +33,7 @@ Options:
   --local-dir PATH      Dataset directory for --record (default: ./lerobot_data).
   --repo-id ID          LeRobot repo id for --record.
   --bridge-host IP      Address on which the bridge publishes samples
-                        (default: ${DATA_COLLECTION_SERVER_IP:-192.168.50.13}).
+                        (default: ${DATA_COLLECTION_SERVER_IP:-192.168.52.160}).
   --bridge-port PORT    ZMQ sample port (default: 5555).
   --hand-telemetry-port PORT
                         ZMQ port for hand telemetry (default: 5558).
@@ -53,7 +53,7 @@ record=0
 local_dir="./lerobot_data"
 repo_id=""
 teleop_source="gello"
-bridge_host="${DATA_COLLECTION_SERVER_IP:-192.168.50.13}"
+bridge_host="${DATA_COLLECTION_SERVER_IP:-192.168.52.160}"
 bridge_port="5555"
 hand_telemetry_port="${HAND_TELEMETRY_PORT:-5558}"
 ros_domain_id="${ROS_DOMAIN_ID:-0}"
@@ -222,6 +222,7 @@ fi
 declare -a child_pids=()
 declare -A child_names=()
 shutdown_started=0
+active_probe_pid=""
 
 start_process() {
   local process_name="$1"; shift
@@ -270,6 +271,10 @@ shutdown() {
   shutdown_started=1
   trap - EXIT INT TERM
 
+  if [[ -n "${active_probe_pid}" ]]; then
+    kill "${active_probe_pid}" 2>/dev/null || true
+    wait "${active_probe_pid}" 2>/dev/null || true
+  fi
   signal_running_groups INT
   if ! wait_for_groups_to_stop 20; then
     signal_running_groups TERM
@@ -298,6 +303,37 @@ start_process "LeRobot data bridge" \
   "arm_mode:=${arm_mode}" \
   "hand_telemetry_host:=${bridge_host}" "hand_telemetry_port:=${hand_telemetry_port}"
 
+# Keep one subscriber alive and surface child failures while waiting for DDS.
+wait_for_payload() {
+  local topic="$1" message_type="$2" seconds="$3"
+  local probe_log probe_pid child_pid status
+  probe_log="$(mktemp /tmp/quest-collection-probe.XXXXXX)"
+  timeout "${seconds}s" ros2 topic echo "${topic}" "${message_type}" \
+    --once --no-daemon >"${probe_log}" 2>&1 &
+  probe_pid=$!
+  active_probe_pid="${probe_pid}"
+  while kill -0 "${probe_pid}" 2>/dev/null; do
+    for child_pid in "${child_pids[@]}"; do
+      if ! kill -0 "${child_pid}" 2>/dev/null; then
+        kill "${probe_pid}" 2>/dev/null || true
+        wait "${probe_pid}" 2>/dev/null || true
+        die "${child_names[${child_pid}]} exited while waiting for ${topic}; probe: ${probe_log}"
+      fi
+    done
+    sleep 0.2
+  done
+  if wait "${probe_pid}"; then
+    active_probe_pid=""
+    return 0
+  else
+    status=$?
+    active_probe_pid=""
+  fi
+  echo "Probe failed (${status}): ${topic}; details: ${probe_log}" >&2
+  tail -8 "${probe_log}" >&2
+  return 1
+}
+
 required_bridge_topics=()
 if [[ "${teleop_source}" == "quest" ]]; then
   required_bridge_topics=("/left/joint_states")
@@ -310,9 +346,7 @@ else
   fi
 fi
 for topic in "${required_bridge_topics[@]}"; do
-  if ! timeout 10s ros2 topic echo \
-    "${topic}" sensor_msgs/msg/JointState --once --no-daemon \
-    >/dev/null 2>&1; then
+  if ! wait_for_payload "${topic}" sensor_msgs/msg/JointState 10; then
     die "no JointState payload received from ${topic}; check cross-host ROS 2 discovery and the control stack"
   fi
   echo "Ready: ${topic} is publishing on the data server"
@@ -332,7 +366,7 @@ if [[ "${teleop_source}" == "quest" ]]; then
   for entry in "${quest_topics[@]}"; do
     topic="${entry%|*}"
     message_type="${entry#*|}"
-    if ! timeout 120s ros2 topic echo "${topic}" "${message_type}" --once --no-daemon >/dev/null 2>&1; then
+    if ! wait_for_payload "${topic}" "${message_type}" 120; then
       die "no payload from ${topic}; for accepted targets ensure client is FOLLOWING after left Y; otherwise check DDS and publishers"
     fi
     echo "Ready: ${topic} is publishing on the data server"
