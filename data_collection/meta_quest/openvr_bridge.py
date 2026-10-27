@@ -233,31 +233,47 @@ def run_bridge(args: argparse.Namespace) -> None:
 
     session_path = Path(args.alvr_session).expanduser()
     if args.check_left_touch or args.check_both_touch:
-        if not alvr_is_streaming(session_path):
-            raise SystemExit("ALVR is not Streaming; physical Touch check failed.")
+        deadline = time.monotonic() + args.touch_wait_s
+        while not alvr_is_streaming(session_path):
+            if time.monotonic() >= deadline:
+                raise SystemExit("ALVR is not Streaming; physical Touch check failed.")
+            print("Waiting for ALVR Streaming before Touch check...", flush=True)
+            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
         openvr.init(openvr.VRApplication_Background)
         try:
             system = openvr.VRSystem()
             sides = ("left", "right") if args.check_both_touch else ("left",)
-            valid = {side: 0 for side in sides}
-            controller_ids = {side: openvr.k_unTrackedDeviceIndexInvalid for side in sides}
-            for _ in range(30):
-                poses = system.getDeviceToAbsoluteTrackingPose(
-                    openvr.TrackingUniverseStanding,
-                    0.0,
-                    openvr.k_unMaxTrackedDeviceCount,
-                )
+            while True:
+                valid = {side: 0 for side in sides}
+                controller_ids = {side: openvr.k_unTrackedDeviceIndexInvalid for side in sides}
+                for _ in range(30):
+                    poses = system.getDeviceToAbsoluteTrackingPose(
+                        openvr.TrackingUniverseStanding,
+                        0.0,
+                        openvr.k_unMaxTrackedDeviceCount,
+                    )
+                    for side in sides:
+                        controller_id = _physical_controller_id(system, openvr, side)
+                        controller_ids[side] = controller_id
+                        if controller_id != openvr.k_unTrackedDeviceIndexInvalid:
+                            tracked = poses[controller_id]
+                            valid[side] += int(tracked.bDeviceIsConnected and tracked.bPoseIsValid)
+                    time.sleep(0.1)
                 for side in sides:
-                    controller_id = _physical_controller_id(system, openvr, side)
-                    controller_ids[side] = controller_id
-                    if controller_id != openvr.k_unTrackedDeviceIndexInvalid:
-                        tracked = poses[controller_id]
-                        valid[side] += int(tracked.bDeviceIsConnected and tracked.bPoseIsValid)
-                time.sleep(0.1)
-            for side in sides:
-                print(f"Physical {side} Touch: {valid[side]}/30 valid OpenVR poses; id={controller_ids[side]}")
-            if any(valid[side] != 30 for side in sides):
-                raise SystemExit("Physical Touch tracking is not ready.")
+                    print(
+                        f"Physical {side} Touch: {valid[side]}/30 valid OpenVR poses; "
+                        f"id={controller_ids[side]}",
+                        flush=True,
+                    )
+                if all(valid[side] == 30 for side in sides):
+                    break
+                if time.monotonic() >= deadline:
+                    raise SystemExit("Physical Touch tracking is not ready after waiting.")
+                waiting_for = " and ".join(sides)
+                print(
+                    f"Waiting for physical {waiting_for} Touch tracking to reach 30/30...",
+                    flush=True,
+                )
         finally:
             openvr.shutdown()
         return
@@ -372,6 +388,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--check-left-touch", action="store_true")
     parser.add_argument("--check-both-touch", action="store_true")
+    parser.add_argument(
+        "--touch-wait-s", type=float, default=0.0,
+        help="wait up to this many seconds for a full 30/30 physical Touch window",
+    )
     args = parser.parse_args(argv)
     if args.single_left and args.global_left_y:
         parser.error("--single-left and --global-left-y are mutually exclusive")
@@ -385,6 +405,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--poll-hz must be positive")
     if args.report_interval_s <= 0.0:
         parser.error("--report-interval-s must be positive")
+    if not 0.0 <= args.touch_wait_s <= 300.0:
+        parser.error("--touch-wait-s must be between 0 and 300")
     return args
 
 

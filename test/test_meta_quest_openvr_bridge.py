@@ -133,5 +133,8 @@ def test_openvr_cli_validates_rates() -> None:
     assert both.side == "both"
     assert both.global_left_y is True
     assert both.check_both_touch is True
+    assert parse_args(["--check-both-touch", "--touch-wait-s", "300"]).touch_wait_s == 300.0
     with pytest.raises(SystemExit):
         parse_args(["--poll-hz", "0"])
+    with pytest.raises(SystemExit):
+        parse_args(["--touch-wait-s", "-1"])

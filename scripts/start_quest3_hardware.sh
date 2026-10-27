@@ -78,7 +78,10 @@ if [[ "${action}" == "--check-only" ]]; then
   exit 0
 fi
 
-bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" --check-both-touch
+touch_check="--check-both-touch"
+[[ "${mode}" == "left" ]] && touch_check="--check-left-touch"
+bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" \
+  "${touch_check}" --touch-wait-s 300
 
 for side in "${sides[@]}"; do
   ip="172.16.0.3"

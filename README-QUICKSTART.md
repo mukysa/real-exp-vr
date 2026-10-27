@@ -73,7 +73,7 @@ env -u CYCLONEDDS_URI \
   bash scripts/start_quest3_hardware.sh --duo --enable-hardware
 ```
 
-脚本先报告左右实体 Touch 均为 `30/30 valid OpenVR poses`，再启动所选机械臂。等待 `Hardware chain ready` 和所选侧的 `LEFT_SOURCE_STATUS`／`RIGHT_SOURCE_STATUS` 显示 `"state":"READY"`；双臂模式必须**两侧都 READY**，此时才按左 Y。
+脚本最多等待 5 分钟：左臂模式确认左实体 Touch `30/30 valid OpenVR poses`；右臂和双臂模式确认左右两只都为 `30/30`，随后才启动所选机械臂。运行中仍监听双手柄按键。等待 `Hardware chain ready` 和所选侧的 `LEFT_SOURCE_STATUS`／`RIGHT_SOURCE_STATUS` 显示 `"state":"READY"`；双臂模式必须**两侧都 READY**，此时才按左 Y。
 
 第一次短按左 Y 接管所选机械臂：`--left` 跟随左手柄，`--right` 跟随右手柄，`--duo` 同时跟随两只手柄。第二次短按左 Y 返回本轮各自的接管点；回位完成并松开 Y 后可再次接管。右手柄 B 不触发接管。若双臂中任一侧显示适配器 `STOP`，在启动终端按 `Ctrl+C`，排除故障后重启会话。
 
@@ -96,7 +96,7 @@ bash scripts/start_data_collection_client.sh --teleop-source quest --left --arm 
 bash scripts/start_data_collection_client.sh --teleop-source quest --left --arm --enable-hardware
 ```
 
-第一个命令不连接机械臂；第二个命令连接左 FR3。等待 `Hardware chain ready` 和左臂 `READY`。这个入口自动加载 client 的有线 DDS 配置，不要加第 3 节的 `env -u CYCLONEDDS_URI`。
+第一个命令不连接机械臂；第二个命令最多等待 5 分钟，直到左实体 Touch 达到 `30/30 valid OpenVR poses`，然后才连接左 FR3。右手柄可以静置，运行中仍会监听双手柄。等待 `Hardware chain ready` 和左臂 `READY`。这个入口自动加载 client 的有线 DDS 配置，不要加第 3 节的 `env -u CYCLONEDDS_URI`。
 
 ### 5.2 server：启动相机和数据桥
 
