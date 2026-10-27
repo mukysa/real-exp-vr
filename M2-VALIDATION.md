@@ -4,6 +4,8 @@
 
 本轮提供环境报告、只读 ROS 话题探测、ZMQ 样本质量报告及隔离合成输入。它们不会启动机械臂或创建训练 episode。两机实测、时钟同步与真实相机运行仍需现场验收。部署方法见 [SERVER-OFFLINE-SYNC.md](SERVER-OFFLINE-SYNC.md)，主仓库和 gello_software 都有新改动，必须分别提交、打包。
 
+2026-10-27 双机有线网卡、单播发现及现场启动环境见 [M2-NETWORK-SETUP.md](M2-NETWORK-SETUP.md)。Quest 数采入口自动加载各自 DDS XML，server 的 Quest ZMQ bridge 默认只绑定本机回环。本次网络改动只涉及主仓库，不修改 GELLO 控制逻辑。无硬件双机验证结果以本页后续记录为准。
+
 ## 1. 本机已验证的结果
 
 2026-10-26，ROS Humble，独立 domain 173、`/m2` 话题和本机 ZMQ 15555：
@@ -59,7 +61,9 @@ export ROS_LOG_DIR=/tmp/m2-ros-logs
   --scenario future --output-dir outputs/m2/future
 ```
 
-工具内部设置 domain 173、localhost-only、`/m2` 输入和 15555/15557 测试端口，并清理其子进程。只发布合成 observation／accepted 样本，不发布 raw command。每次约 13 秒，输出 result.json 和子进程日志；失败返回非零。
+工具内部强制 CycloneDDS、domain 173、XML 回环接口、`/m2` 输入和 15555/15557 测试端口，并清理其子进程，不继承外部 CYCLONEDDS_URI。只发布合成 observation／accepted 样本，不发布 raw command。普通场景约 13 秒；带 schema 的场景最多等待 45 秒。输出 result.json 和子进程日志；失败返回非零。结果保留首个失败原因及清理前后子进程退出码。
+
+2026-10-27 本机 Humble 修复后复测：正常链路收到 190 包；schema 收到 121 包，全部有效，约 15.001 Hz；22 项既有测试通过。显式 XML 绑定 lo 时不再同时开启 ROS_LOCALHOST_ONLY，避免 Humble 重复选择接口。以上仍不是 server Jazzy 或两机验收结果。
 
 完整 schema 检查需要 LeRobot Python。可在 normal 测试中传入该环境 Python 的绝对路径：
 
@@ -85,11 +89,10 @@ bash scripts/build_data_collection_server.sh
 
 ```bash
 bash scripts/start_data_collection_server.sh \
-  --teleop-source quest --left --arm \
-  --bridge-host 192.168.52.160 --ros-domain-id 0
+  --teleop-source quest --left --arm --ros-domain-id 0
 ```
 
-本轮已将 split collection 的 client/server 入口及 recorder 默认地址改为 192.168.52.160，环境变量 DATA_COLLECTION_SERVER_IP 仍可覆盖。其他历史脚本的默认地址未全面修改。
+Quest 模式的 ZMQ bridge 和 recorder 默认在 server 本机 `127.0.0.1:5555` 通信；跨机的机器人状态和目标走有线 ROS 2 DDS `192.168.1.100 ↔ 192.168.1.50`。原 GELLO 分支的网络默认值仍可由 `DATA_COLLECTION_SERVER_IP` 覆盖。
 
 client READY 后按 Y，进入 FOLLOWING，才会有正常 accepted target。server 等待期间会检查相机／bridge 子进程是否退出，探测错误写入 `/tmp/quest-collection-probe.*`。收到一次状态消息并不代表录制门控已实现。
 
@@ -110,7 +113,7 @@ export ROS_DOMAIN_ID=0
 ```bash
 conda activate lerobot-vr
 python -m data_collection.diagnostics.samples \
-  --host 192.168.52.160 --port 5555 \
+  --host 127.0.0.1 --port 5555 \
   --duration 60 --silence-timeout 5 \
   --output outputs/m2/live-samples.json
 ```
@@ -130,8 +133,11 @@ python -m data_collection.diagnostics.samples \
 
 ## 6. M2 仍待两机完成的验收
 
-- server 构建成功及安装路径、Jazzy/Humble 消息、RMW/QoS、DDS 发现实际兼容。
-- 真实两路相机、关节、动作、EE 与 VR 状态均跨机／本机正确到达。
+2026-10-27 **无硬件有线链路已通过**：server 重建 `franka_lerobot_data_bridge` 和 `franka_realsense_camera_publisher` 两包并核对安装路径；独立 domain 173 的双向字符串测试通过；server 本机合成 bridge/schema 审核 121/121 有效；跨机 client 合成关节、accepted target、FrankaRobotState、小图像 → server bridge → 本机 ZMQ 的 60 秒审核收到 **901/901 有效，0 无效，15.000 Hz**。报告在 server `outputs/m2/20261027-server-isolated/` 与 `outputs/m2/20261027-wired-crosshost-samples.json`。跨发行版 type-hash 警告仍出现，但没有阻止这些合成消息传输。它们不是实际机器人或相机的验收结果。
+
+仍待现场验收：
+
+- 真实两路相机、关节、accepted action、EE 与 VR 状态的 RMW/QoS、吞吐、时间戳和两机时钟偏差；合成消息通过不代表真机话题全部兼容。
 - 真实时钟偏差、十分钟连续接收统计、实际输入／IK／accepted 发布频率。
 - client 退出、网络断开、相机停流、server 重启的现场诊断与恢复；停止真机输入应由现场操作者执行。
 - TCP/FK 对齐及录制边界、FOLLOWING 门控、跨段清空 pending frame 属于 M3；本轮不将真实训练 episode 判为可用。

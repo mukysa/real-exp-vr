@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Quest collection DDS only: client wired 192.168.1.100 to server 192.168.1.50.
+     Keep the FR3 172.16.0.100 interface and Quest Wi-Fi outside this DDS path. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces><NetworkInterface name="enxf8e43bd073d7"/></Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <Peers>
+        <Peer Address="127.0.0.1"/>
+        <Peer Address="192.168.1.50"/>
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

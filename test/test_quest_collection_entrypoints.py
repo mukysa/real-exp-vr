@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize("action", ["--check-only", "--enable-hardware"])
 def test_quest_client_routes_without_gello_build(tmp_path, action):
     shutil.copy(ROOT / "scripts/start_data_collection_client.sh", tmp_path)
+    config_dir = tmp_path.parent / "config" / "data_collection"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(ROOT / "config/data_collection/cyclonedds-client.xml", config_dir)
     (tmp_path / "start_quest3_hardware.sh").write_text('printf "%s\\n" "$@"\n')
     result = subprocess.run(
         ["bash", str(tmp_path / "start_data_collection_client.sh"),
@@ -19,7 +22,8 @@ def test_quest_client_routes_without_gello_build(tmp_path, action):
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["--left", action]
+    assert "Quest collection DDS: wired client to server" in result.stdout
+    assert result.stdout.splitlines()[-2:] == ["--left", action]
 
 
 @pytest.mark.parametrize("launcher", ["client", "server"])

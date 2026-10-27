@@ -23,8 +23,21 @@ def main():
         parser.error('--sample-python is supported for the normal scenario only')
     args.output_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env.update(ROS_DOMAIN_ID='173', ROS_LOCALHOST_ONLY='1')
+    # XML below enforces loopback; ROS_LOCALHOST_ONLY=1 adds lo a second
+    # time in Humble's Cyclone RMW and prevents domain creation.
+    env.update(ROS_DOMAIN_ID='173', ROS_LOCALHOST_ONLY='0')
     env.pop('ROS_AUTOMATIC_DISCOVERY_RANGE', None)
+    env.pop('ROS_STATIC_PEERS', None)
+    # Isolated tests must not inherit a real-network interface or stale IP.
+    env['RMW_IMPLEMENTATION'] = 'rmw_cyclonedds_cpp'
+    env['CYCLONEDDS_URI'] = '''<CycloneDDS xmlns="https://cdds.io/config">
+      <Domain Id="any"><General>
+        <Interfaces><NetworkInterface name="lo"/></Interfaces>
+        <AllowMulticast>false</AllowMulticast>
+      </General><Discovery><ParticipantIndex>auto</ParticipantIndex>
+        <Peers><Peer Address="127.0.0.1"/></Peers>
+      </Discovery></Domain></CycloneDDS>'''
+    window = 45 if args.sample_python else 13
     bridge = ROOT / 'gello_software/ros2/src/franka_lerobot_data_bridge/franka_lerobot_data_bridge/lerobot_data_bridge.py'
     command = [sys.executable, '-c', 'import runpy,sys; runpy.run_path(sys.argv.pop(1))["main"]()', str(bridge),
                '--ros-args', '--params-file', str(ROOT / 'config/data_collection/quest_left.yaml'),
@@ -35,7 +48,7 @@ def main():
                   '/left/franka_robot_state_broadcaster/robot_state',
                   '/cameras/cam_left/image_raw', '/cameras/cam_front/image_raw'):
         command += ['-r', f'{topic}:=/m2{topic}']
-    fixture = [sys.executable, '-m', 'data_collection.diagnostics.synthetic_ros', '--duration', '15',
+    fixture = [sys.executable, '-m', 'data_collection.diagnostics.synthetic_ros', '--duration', str(window + 5),
                '--drop-after', '7']
     if args.scenario in ('action', 'state', 'camera'):
         fixture += ['--drop', args.scenario]
@@ -49,6 +62,8 @@ def main():
     packets = []
     failure = None
     checker = None
+    passed = False
+    exit_codes_before_cleanup = {}
     start = time.monotonic()
     try:
         for name, cmd in [('bridge', command), ('fixture', fixture)]:
@@ -64,7 +79,7 @@ def main():
                 '--port', '15555', '--duration', '8', '--output',
                 str(args.output_dir / 'schema-audit.json')], cwd=ROOT, env=env,
                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        while time.monotonic() - start < 13:
+        while time.monotonic() - start < window:
             if any(child.poll() is not None for child in children):
                 failure = 'child exited early; inspect logs'
                 break
@@ -77,18 +92,31 @@ def main():
                     failure = 'invalid bridge contract'
                     break
                 packets.append(time.monotonic() - start)
+            if checker is not None and checker.poll() is not None:
+                if checker.returncode != 0:
+                    failure = 'schema audit exited nonzero; inspect schema-audit.log'
+                    break
+                if time.monotonic() - start >= 13:
+                    break
         if args.scenario == 'future':
             passed = not packets
         elif args.scenario == 'normal':
             passed = len(packets) >= 30 and packets[-1] > 11
         else:
             passed = len(packets) >= 20 and packets[-1] < 10
-        if checker is not None:
-            if checker.poll() != 0:
-                failure = 'schema audit failed or did not finish; inspect schema-audit.log'
+        if checker is not None and failure is None:
+            code = checker.poll()
+            if code is None:
+                failure = 'schema audit timed out; inspect schema-audit.log'
+            elif code != 0:
+                failure = 'schema audit exited nonzero; inspect schema-audit.log'
         passed = passed and failure is None
     finally:
+        exit_codes_before_cleanup = {
+            name: child.poll() for name, child in zip(('bridge', 'fixture'), children)
+        }
         if checker is not None:
+            exit_codes_before_cleanup['schema_audit'] = checker.poll()
             children.append(checker)
         for child in children:
             if child.poll() is None:
@@ -104,6 +132,10 @@ def main():
         subscriber.close(linger=0)
         context.term()
     result = dict(scenario=args.scenario, passed=passed, failure=failure,
+                  exit_codes_before_cleanup=exit_codes_before_cleanup,
+                  exit_codes_after_cleanup={
+                      name: child.returncode for name, child in
+                      zip(('bridge', 'fixture', 'schema_audit'), children)},
                   received=len(packets), first_receive_s=packets[0] if packets else None,
                   last_receive_s=packets[-1] if packets else None)
     (args.output_dir / 'result.json').write_text(json.dumps(result, indent=2) + '\n')

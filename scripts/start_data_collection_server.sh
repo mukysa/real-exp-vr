@@ -33,7 +33,8 @@ Options:
   --local-dir PATH      Dataset directory for --record (default: ./lerobot_data).
   --repo-id ID          LeRobot repo id for --record.
   --bridge-host IP      Address on which the bridge publishes samples
-                        (default: ${DATA_COLLECTION_SERVER_IP:-192.168.52.160}).
+                        (Quest default: 127.0.0.1; GELLO default:
+                        ${DATA_COLLECTION_SERVER_IP:-192.168.52.160}).
   --bridge-port PORT    ZMQ sample port (default: 5555).
   --hand-telemetry-port PORT
                         ZMQ port for hand telemetry (default: 5558).
@@ -54,6 +55,7 @@ local_dir="./lerobot_data"
 repo_id=""
 teleop_source="gello"
 bridge_host="${DATA_COLLECTION_SERVER_IP:-192.168.52.160}"
+bridge_host_explicit=0
 bridge_port="5555"
 hand_telemetry_port="${HAND_TELEMETRY_PORT:-5558}"
 ros_domain_id="${ROS_DOMAIN_ID:-0}"
@@ -85,7 +87,7 @@ while [[ "$#" -gt 0 ]]; do
       repo_id="$2"; shift 2 ;;
     --bridge-host)
       [[ "$#" -ge 2 ]] || die "--bridge-host requires an address"
-      bridge_host="$2"; shift 2 ;;
+      bridge_host="$2"; bridge_host_explicit=1; shift 2 ;;
     --bridge-port)
       [[ "$#" -ge 2 ]] || die "--bridge-port requires a port"
       bridge_port="$2"; shift 2 ;;
@@ -112,12 +114,21 @@ esac
 if [[ "${teleop_source}" == "quest" ]]; then
   [[ "${arm_mode}" == "left" && "${gripper_mode}" == "arm" ]] || die "Quest collection currently supports only --left --arm"
   repo_id="${repo_id:-local/franka_quest_left_teleop}"
+  [[ "${bridge_host_explicit}" -eq 1 ]] || bridge_host="127.0.0.1"
 else
   repo_id="${repo_id:-local/franka_gello_teleop}"
 fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd -- "${script_dir}/.." && pwd)"
+if [[ "${teleop_source}" == "quest" ]]; then
+  dds_config="${repository_root}/config/data_collection/cyclonedds-server.xml"
+  [[ -r "${dds_config}" ]] || die "Quest collection DDS config is missing: ${dds_config}"
+  export CYCLONEDDS_URI="file://${dds_config}"
+  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+  unset ROS_STATIC_PEERS
+  echo "Quest collection DDS: wired server to client via ${dds_config}"
+fi
 export PYTHONPATH="${repository_root}${PYTHONPATH:+:${PYTHONPATH}}"
 # shellcheck source=scripts/conda_env.sh
 source "${script_dir}/conda_env.sh"

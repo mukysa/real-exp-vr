@@ -81,7 +81,7 @@ env -u CYCLONEDDS_URI \
 
 在真机启动终端按 `Ctrl+C`，等待 `Stopped`；再关闭 FCI、SteamVR 和 ALVR Dashboard。
 
-## 5. 左臂 VR 数采入口（入口已实现，跨机采集待验收）
+## 5. 左臂 VR 数采入口（合成跨机链路已验证，真机采集待验收）
 
 完成上述性能和 VR 准备后，可用统一数采 client 入口替代第 3 节的启动命令；两者只启动一个。首版仅支持 Quest 左臂 arm-only，仍需两只 Touch 有效追踪。
 
@@ -91,15 +91,14 @@ env -u CYCLONEDDS_URI \
 bash scripts/start_data_collection_client.sh --teleop-source quest --left --arm --check-only
 ```
 
-client 真机启动，沿用第 3 节已验证的 DDS 环境：
+client 的 Quest 数采入口会自动加载仓库内的有线 DDS 配置；无需手动清除 `CYCLONEDDS_URI`。真机启动须由现场操作者执行：
 
 ```bash
-env -u CYCLONEDDS_URI RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 \
-  bash scripts/start_data_collection_client.sh \
+bash scripts/start_data_collection_client.sh \
   --teleop-source quest --left --arm --enable-hardware
 ```
 
-server 更新主仓库与 gello_software 子仓库后，需要重新构建 server ROS 包（新增了 bridge 的 teleop_source 参数）：
+server 的 ROS 采集包已按当前源码重建；日后更新 bridge 源码时需重新构建：
 
 ```bash
 bash scripts/build_data_collection_server.sh
@@ -107,7 +106,7 @@ bash scripts/start_data_collection_server.sh \
   --teleop-source quest --left --arm
 ```
 
-server 使用 `config/data_collection/quest_left.yaml`，只要求左臂和 cam_left / cam_front；action 来源为 `/left/vr/accepted_joint_states`。等 client READY 后按左 Y 进入跟随，server 才能收到 accepted target；Quest 额外话题各等待最多 120 秒。该检查验证收到消息，FOLLOWING 录制门控和跨机同步验收属于后续步骤。
+server 使用 `config/data_collection/quest_left.yaml` 和有线 DDS 配置，只要求左臂和 cam_left / cam_front；action 来源为 `/left/vr/accepted_joint_states`。Quest 模式的 ZMQ bridge 默认绑定本机 `127.0.0.1:5555`，recorder 在同一台 server 上读取。等 client READY 后按左 Y 进入跟随，server 才能收到 accepted target；Quest 额外话题各等待最多 120 秒。该检查验证收到消息，FOLLOWING 录制门控和跨机同步验收属于后续步骤。
 
 后续跨机及录制边界验收时可添加 `--record --local-dir ./lerobot_data/quest_left`；默认 repo id 为 `local/franka_quest_left_teleop`，动作元数据记录 `teleop_source: quest`。当前尚未实现回位／故障自动切断 episode，请勿把入口检查通过视为训练数据验收通过。
 

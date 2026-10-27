@@ -8,7 +8,7 @@
 
 ## 当前左臂实施主线
 
-1. **完成左臂入口与配置接线（左臂 M1 已验证）：** client/server 支持 `--teleop-source quest --left --arm`；client 复用现有 VR 启动与显式硬件启用，server 使用主仓库 Quest 配置、检查左臂 VR 话题，保存输入源标识。右臂／双臂／夹爪暂不开放。server 源码及子模块已同步；server 重新构建与运行验证留到 M2。
+1. **完成左臂入口与配置接线（左臂 M1 已验证）：** client/server 支持 `--teleop-source quest --left --arm`；client 复用现有 VR 启动与显式硬件启用，server 使用主仓库 Quest 配置、检查左臂 VR 话题，保存输入源标识。右臂／双臂／夹爪暂不开放。server 源码及子模块已同步，采集 ROS 包已于 2026-10-27 重建；真实输入仍待 M2 现场验收。
 2. **验证 server 收到完整样本（待验收）：** 核对远端环境和 DDS，收到左臂状态、accepted action、VR 状态及两路图像，生成有效 schema-v2 包。
 3. **补齐录制边界，采真实 episode（待实现／验收）：** FOLLOWING 门控、回位／故障边界、清空跨段配对，再做数据校验、loader 和回放 dry-run。
 
@@ -24,7 +24,7 @@
 | 左臂遥操 | 已现场验证六自由度跟随、回位、再次接管 | 重复启动与长时间稳定性；单臂日志仍有 FCI 通信故障 |
 | 右臂／双臂 | 三模式入口、独立适配器、共同就绪与故障联动；已有双臂现场试运行 | 优化后流畅度、双侧回位完成和完整循环验收 |
 | client 采集入口 | Quest 左臂 arm-only 分支已通过离线检查、真机启动及一次 Y 接管 | 重复接管循环和长期稳定性 |
-| server 采集入口 | Quest 左臂配置与就绪检查已实现并同步到 server，help 已确认 | 本机重建、环境核对、跨机接收与样本联调 |
+| server 采集入口 | Quest 左臂配置与就绪检查已实现；当前源码已重建，跨机合成样本通过 | 真实相机、机器人状态与 accepted action 联调 |
 | 数据格式 | schema-v2、关节／末端表示、校验与回放工具；Quest 来源标识已实现并离线测试 | 会话状态、录制边界及端到端采集验收 |
 
 基线证据：
@@ -81,7 +81,7 @@ RealSense 图像 + 机器人状态／动作 → ROS 数据 bridge
 - 首次失败日志：`outputs/quest3_hardware/20261026-170331-left/hardware-left.log`；硬件及 broadcaster 已激活，但等待 joint_states 超时。更改订阅等待方式后重试成功；未单独证明超时的唯一根因。
 - 成功启动日志目录：`outputs/quest3_hardware/20261026-171106-left`；终端显示 `Hardware chain ready: left`，用户确认 Y 接管成功。
 - server `/home/pair1/real-exp-vr`：分支 `server/quest-left`，主仓库 `2acc5a1`，gello_software `135d3bf`，lerobot `4eecbad`；子模块与主仓库记录一致。以上是首次迁移检查点，不包含后续文档修改。
-- server 地址：`192.168.52.160`。离线迁移方法见 [SERVER-OFFLINE-SYNC.md](SERVER-OFFLINE-SYNC.md)。M1 检查点仍使用旧默认地址；本轮 M2 已更新 split collection 默认值，部署时仍建议显式传 `--bridge-host 192.168.52.160`。
+- server 的 SSH 地址仍可用 `192.168.52.160`；Quest 数采 DDS 使用有线 `192.168.1.100 ↔ 192.168.1.50`，server bridge 的 Quest ZMQ 默认绑定本机 `127.0.0.1:5555`。离线迁移方法见 [SERVER-OFFLINE-SYNC.md](SERVER-OFFLINE-SYNC.md)，有线配置见 [M2-NETWORK-SETUP.md](M2-NETWORK-SETUP.md)。
 - 测试限制：扩展测试 3 项因缺少数据集元数据失败；原 recorder 2 项测试在修改前 HEAD 上同样失败，未作为本轮通过项。
 
 
@@ -100,20 +100,21 @@ RealSense 图像 + 机器人状态／动作 → ROS 数据 bridge
 
 ### M2 — client/server 通信与同步验收（需两机；可先用隔离测试话题）
 
-**本机开发与隔离验证已完成一轮（2026-10-26），两机 M2 未验收。** 工具与操作步骤见 [M2-VALIDATION.md](M2-VALIDATION.md)。
+**本机及跨机合成链路已通过（2026-10-27），真实机器人和相机输入未验收。** 工具与操作步骤见 [M2-VALIDATION.md](M2-VALIDATION.md)。
 
 - [x] 新增环境 JSON 报告、并行只读话题探测、ZMQ schema-v2／频率／时间戳质量报告工具。
 - [x] bridge 增加 action 时间戳、状态动作时间差、拒绝回调计数；collection 模式拒绝非法／未来输入时间戳。
 - [x] 新增 domain 173、/m2 命名空间隔离合成测试；正常链路、动作／状态／相机断流、超前 5 秒时间戳五种情形通过。
 - [x] 完整 schema 审计 121 包全部有效，合成链路约 15.002 Hz；22 项诊断及入口单元测试通过。这些数字不代表真实跨机性能。
 - [x] split collection 默认 server 地址更新为 192.168.52.160；server 等待话题期间增加子进程退出检查及探测日志。
+- [x] Quest 数采 DDS 固定到现有千兆有线网段；双向字符串话题通过，server bridge 从 client 合成关节、accepted action、EE 与图像形成 901/901 有效 ZMQ 样本，60 秒约 15.000 Hz。原 GELLO 入口保留。
 
 
 - [x] 根据 server 实际终端输出核对 checkout 和子仓库版本（见 M1 迁移检查点）。
-- [ ] 核对 server 构建路径、ROS/RMW 和 franka_msgs 版本，重新构建并验证加载的安装产物；源码同步不能替代部署验收。
-- [ ] 检查相同 ROS_DOMAIN_ID、可达网卡、DDS 发现配置及 QoS；逐项验证 JointState、FrankaRobotState 和状态字符串跨机实际收到消息。
+- [x] server 重建 bridge 和 RealSense publisher，并核对实际加载路径；跨机合成 JointState、FrankaRobotState、状态字符串和图像已通过。Humble/Jazzy type-hash 警告仍存在，真实 QoS 与消息源待现场验证。
+- [ ] 用真实 ROS topic 逐项验证 JointState、FrankaRobotState、状态字符串和两路图像的发现、QoS、时钟及新鲜度。
 - [ ] server 启动预检查覆盖实测关节、accepted action、FrankaRobotState、所选相机和遥操状态；区分“等待 Y 接管产生首个目标”与“通信失败”。
-- [ ] 在独立 ROS_DOMAIN_ID／测试命名空间用录制样本或合成数据验证通信，不向真机 raw-command topic 注入测试目标。
+- [x] 在独立 ROS_DOMAIN_ID=173／`/m2` 命名空间用合成数据验证通信，未向真机 raw-command topic 注入测试目标。
 - [ ] 验证跨机时钟偏差、ROS header 时间、server 接收时间和数据新鲜度判定；跨主机不直接相减各自的 monotonic 时间。
 - [ ] 保留并核查 bridge 的相机时间偏差和数据年龄检查，补充机器人状态与 action 的时间对齐统计；明确重采样、复用目标和丢弃过期帧的规则。
 - [ ] 核验 30 Hz 左右输入／状态、实际 IK 输出和 15 Hz 采集之间的关系；避免通过重复旧目标掩盖低频 IK。
@@ -193,4 +194,4 @@ RealSense 图像 + 机器人状态／动作 → ROS 数据 bridge
 
 **主线完成标准：** 无 GELLO 输入设备，Quest 控制所选 FR3；client 数据真实到达 server；server 同步采集图像、实测状态和控制器接受的动作；episode 可开始、保存、丢弃和异常结束；产物通过校验、训练 loader 读取和回放检查；左／右／双臂分别有验收记录。夹爪抓取采集作为后续单独验收项。
 
-**下一项最小可执行任务：** 在本机开发 M2 的环境诊断、隔离样本与采集质量报告工具，离线验证后通过 bundle 同步到 server；核对环境并重建，验证一条跨机 schema-v2 有效样本链路，再推进 M3 录制边界与首个真实 episode。
+**下一项最小可执行任务：** 由现场操作者启动左臂 Quest 数采入口；server 不带 `--record` 启动两路真实相机与 bridge，使用现有 M2 报告工具检查 60 秒、再 600 秒真实样本。先解决 server 仅剩约 55 GB 空间的容量规划；M3 的 FOLLOWING 门控与 episode 边界完成前，不将候选数据标为训练样本。

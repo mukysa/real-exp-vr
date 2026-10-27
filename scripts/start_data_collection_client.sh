@@ -59,9 +59,18 @@ if [[ "${teleop_source}" == "quest" ]]; then
   [[ -n "${quest_action}" ]] || {
     echo "Quest requires --check-only or explicit --enable-hardware" >&2; exit 2;
   }
+  repository_root="$(cd -- "${script_dir}/.." && pwd)"
+  dds_config="${repository_root}/config/data_collection/cyclonedds-client.xml"
+  [[ -r "${dds_config}" ]] || {
+    echo "Quest collection DDS config is missing: ${dds_config}" >&2; exit 1;
+  }
+  export CYCLONEDDS_URI="file://${dds_config}"
+  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
   export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
   export ROS_LOCALHOST_ONLY=0
   export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+  unset ROS_STATIC_PEERS
+  echo "Quest collection DDS: wired client to server via ${dds_config}"
   exec bash "${script_dir}/start_quest3_hardware.sh" --left "${quest_action}"
 fi
 [[ -z "${quest_action}" ]] || { echo "hardware action flags require --teleop-source quest" >&2; exit 2; }
