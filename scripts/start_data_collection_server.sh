@@ -303,8 +303,14 @@ trap 'exit 143' TERM
 
 echo "Data-server mode: ${arm_mode}; teleop source: ${teleop_source}; ROS: ${ros_distro}; bridge: tcp://${bridge_host}:${bridge_port}"
 
+camera_launch_args=()
+if [[ "${teleop_source}" == "quest" ]]; then
+  camera_config="${repository_root}/config/data_collection/quest_left_camera.yaml"
+  [[ -r "${camera_config}" ]] || die "Quest left camera config is missing: ${camera_config}"
+  camera_launch_args+=("config_file:=${camera_config}")
+fi
 start_process "RealSense camera publisher" \
-  ros2 launch franka_realsense_camera_publisher cameras.launch.py
+  ros2 launch franka_realsense_camera_publisher cameras.launch.py "${camera_launch_args[@]}"
 start_process "LeRobot data bridge" \
   ros2 launch franka_lerobot_data_bridge bridge.launch.py \
   "config_file:=${config_file}" \
@@ -364,24 +370,24 @@ for topic in "${required_bridge_topics[@]}"; do
 done
 
 if [[ "${teleop_source}" == "quest" ]]; then
-  # READY has no accepted targets yet. Allow the operator time to press Y.
-  echo "Waiting for left VR inputs. Once client is READY, press left Y to follow."
+  # Measured state and the camera are available before Y; accepted targets
+  # intentionally begin only after the operator takes over on the client.
+  echo "Checking Quest left observations before Y; server never initializes the FR3."
   quest_topics=(
     "/left/vr/source_status|std_msgs/msg/String"
     "/left/vr/status|std_msgs/msg/String"
     "/left/franka_robot_state_broadcaster/robot_state|franka_msgs/msg/FrankaRobotState"
     "/cameras/cam_left/image_raw|sensor_msgs/msg/Image"
-    "/cameras/cam_front/image_raw|sensor_msgs/msg/Image"
-    "/left/vr/accepted_joint_states|sensor_msgs/msg/JointState"
   )
   for entry in "${quest_topics[@]}"; do
     topic="${entry%|*}"
     message_type="${entry#*|}"
     if ! wait_for_payload "${topic}" "${message_type}" 120; then
-      die "no payload from ${topic}; for accepted targets ensure client is FOLLOWING after left Y; otherwise check DDS and publishers"
+      die "no payload from ${topic}; check wired DDS and the client/camera publishers"
     fi
     echo "Ready: ${topic} is publishing on the data server"
   done
+  echo "Quest left observation path ready before Y. Press left Y on the client to start accepted targets and bridge samples."
 fi
 
 if [[ "${record}" -eq 1 ]]; then
@@ -390,7 +396,11 @@ if [[ "${record}" -eq 1 ]]; then
     --host "${bridge_host}" --port "${bridge_port}" \
     --repo-id "${repo_id}" --local-dir "${local_dir}"
 else
-  echo "Recorder not started. Restart this launcher with --record to launch it automatically."
+  if [[ "${teleop_source}" == "quest" ]]; then
+    echo "Recorder not started. After bridge samples begin, run the interactive recorder in another server terminal."
+  else
+    echo "Recorder not started. Restart this launcher with --record to launch it automatically."
+  fi
 fi
 
 echo "Data-server stack is running. Press Ctrl-C to stop it."

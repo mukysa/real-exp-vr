@@ -26,11 +26,10 @@ def main():
     rclpy.init(args=[])
     node = rclpy.create_node('m2_synthetic_inputs')
     types = {'joint': JointState, 'action': JointState, 'ee': FrankaRobotState,
-             'cam_left': Image, 'cam_front': Image, 'source': String, 'status': String}
+             'cam_left': Image, 'source': String, 'status': String}
     topics = {'joint': '/m2/left/joint_states', 'action': '/m2/left/vr/accepted_joint_states',
               'ee': '/m2/left/franka_robot_state_broadcaster/robot_state',
               'cam_left': '/m2/cameras/cam_left/image_raw',
-              'cam_front': '/m2/cameras/cam_front/image_raw',
               'source': '/m2/left/vr/source_status', 'status': '/m2/left/vr/status'}
     publishers = {key: node.create_publisher(types[key], topic, 10) for key, topic in topics.items()}
     start = time.monotonic()
@@ -59,8 +58,8 @@ def main():
             msg.f_t_ee.header.stamp = stamp
             msg.f_t_ee.pose.orientation.w = 1.
             publishers['ee'].publish(msg)
-        for name in ('cam_left', 'cam_front'):
-            if dropped == 'camera' and name == 'cam_front':
+        for name in ('cam_left',):
+            if dropped == 'camera':
                 continue
             msg = Image()
             msg.header.stamp = stamp

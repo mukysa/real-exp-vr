@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
 from data_collection.fr3_ik.kinematics import Kinematics
@@ -70,6 +71,28 @@ def test_y_captures_measured_anchor_and_second_y_returns() -> None:
     reengaged = core.process(sample(8, 1.64, y=True))
     assert core.state == "FOLLOWING"
     assert reengaged.result is not None and reengaged.result.success
+
+
+@pytest.mark.parametrize(
+    ("settled_error_rad", "expected_state"),
+    [(0.021, "READY"), (0.04, "RETURNING")],
+)
+def test_return_completes_with_small_stationary_impedance_error(
+    settled_error_rad: float, expected_state: str
+) -> None:
+    core = LeftLiveControl(Kinematics("left"), clock_id="test")
+    ready(core)
+    core.update_measured(Q, (0.0,) * 7, 1.20)
+    core.process(sample(4, 1.20, y=True))
+    core.update_measured(Q, (0.0,) * 7, 1.24)
+    core.process(sample(5, 1.24))
+
+    settled_q = (*Q[:-1], Q[-1] + settled_error_rad)
+    core.update_measured(settled_q, (0.0,) * 7, 1.40)
+    result = core.process(sample(6, 1.40, y=True))
+
+    assert result.result is not None and result.result.success
+    assert core.state == expected_state
 
 
 def test_scaled_workspace_is_hard_capped_at_five_mm() -> None:

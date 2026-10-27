@@ -22,9 +22,7 @@ lerobot_data_bridge:
     camera_1_enabled: true
     camera_1_name: "cam_left"
     camera_1_topic: "/cameras/cam_left/image_raw"
-    camera_2_enabled: true
-    camera_2_name: "cam_front"
-    camera_2_topic: "/cameras/cam_front/image_raw"
+    camera_2_enabled: false
+    camera_2_name: "cam_right"
+    camera_2_topic: "/cameras/cam_right/image_raw"
     camera_3_enabled: false
-    camera_3_name: "cam_right"
-    camera_3_topic: "/cameras/cam_right/image_raw"

@@ -83,7 +83,7 @@ env -u CYCLONEDDS_URI \
 
 ## 5. 左臂 VR 双机采集验证
 
-完成第 1、2 节的准备后，用下面的 **client 数采入口替代第 3 节的独立遥操命令**；不要同时启动两个真机入口。Quest 数采目前只支持左臂 arm-only。client 负责左 FR3 控制，机器人状态和 accepted target 经有线 ROS 2 DDS 到 server；server 合并两路相机后在本机 `127.0.0.1:5555` 发布 ZMQ 样本，录制文件保存在 server。
+完成第 1、2 节的准备后，用下面的 **client 数采入口替代第 3 节的独立遥操命令**；不要同时启动两个真机入口。Quest 数采目前只支持左臂 arm-only。client 负责左 FR3 控制，机器人状态和 accepted target 经有线 ROS 2 DDS 到 server；server 只采集左手相机 `cam_left`，并在本机 `127.0.0.1:5555` 发布 ZMQ 样本，录制文件保存在 server。
 
 ### 5.1 client：检查并启动左臂
 
@@ -108,7 +108,7 @@ bash scripts/start_data_collection_server.sh \
   --teleop-source quest --left --arm --ros-domain-id 0
 ```
 
-server 当前的 ROS 采集包已按源码构建。若之后改动了 bridge 或相机源码，先在 server 执行 `bash scripts/build_data_collection_server.sh`。当 server 提示等待左臂 VR 输入时，短按一次左 Y 接管并移动左手柄；server 收到 `/left/vr/accepted_joint_states` 后会显示 `Data-server stack is running`。测试期间保持左臂跟随。
+server 当前的 ROS 采集包已按源码构建。若之后改动了 bridge 或相机源码，先在 server 执行 `bash scripts/build_data_collection_server.sh`。server 收到左臂实测状态、VR 状态和 `cam_left` 图像后，会在**按 Y 前**报告 `Quest left observation path ready before Y` 和 `Data-server stack is running`。此时再由你短按一次左 Y 接管并移动左手柄；`/left/vr/accepted_joint_states` 从这时开始发布，数据桥随后输出 ZMQ 样本。server 不初始化也不控制机械臂。
 
 ### 5.3 server：检查并录制数据
 

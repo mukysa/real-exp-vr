@@ -55,8 +55,15 @@ def test_quest_left_bridge_contract():
     assert not params["include_right_arm"]
     assert not params["include_gripper"]
     assert not params["include_hand"]
-    assert params["camera_1_enabled"] and params["camera_2_enabled"]
+    assert params["camera_1_enabled"]
+    assert params["camera_1_name"] == "cam_left"
+    assert not params["camera_2_enabled"]
     assert not params["camera_3_enabled"]
+
+    camera = yaml.safe_load((ROOT / "config/data_collection/quest_left_camera.yaml").read_text())["realsense_camera_publisher"]["ros__parameters"]
+    assert camera["camera_1_enabled"] and camera["camera_1_name"] == "cam_left"
+    assert camera["camera_1_serial"] == "260322270745"
+    assert not camera["camera_2_enabled"] and not camera["camera_3_enabled"]
 
 
 def test_quest_source_is_persisted_without_changing_legacy_gello_metadata():

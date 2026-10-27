@@ -46,7 +46,7 @@ def main():
                '-p', 'deployment_mode:=false']
     for topic in ('/left/joint_states', '/left/vr/accepted_joint_states',
                   '/left/franka_robot_state_broadcaster/robot_state',
-                  '/cameras/cam_left/image_raw', '/cameras/cam_front/image_raw'):
+                  '/cameras/cam_left/image_raw'):
         command += ['-r', f'{topic}:=/m2{topic}']
     fixture = [sys.executable, '-m', 'data_collection.diagnostics.synthetic_ros', '--duration', str(window + 5),
                '--drop-after', '7']
@@ -87,7 +87,7 @@ def main():
                 packet = subscriber.recv_pyobj()
                 # Payload schema is additionally checked with samples.py under LeRobot Python.
                 if (packet.get('teleop_source') != 'quest' or len(packet.get('target_joint', [])) != 7
-                        or set(packet.get('cameras', {})) != {'cam_left', 'cam_front'}
+                        or set(packet.get('cameras', {})) != {'cam_left'}
                         or 'left' not in packet.get('action_freshness', {})):
                     failure = 'invalid bridge contract'
                     break

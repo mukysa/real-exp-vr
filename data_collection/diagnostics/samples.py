@@ -47,8 +47,8 @@ class SampleAudit:
             if (packet.get('teleop_source') != 'quest' or packet.get('arm_mode') != 'left'
                     or packet.get('include_gripper') or packet.get('include_hand')):
                 raise ValueError('expected Quest left arm-only sample')
-            if set(packet['camera_names']) != {'cam_left', 'cam_front'}:
-                raise ValueError('expected cam_left and cam_front')
+            if set(packet['camera_names']) != {'cam_left'}:
+                raise ValueError('expected cam_left only')
             for key in ('state', 'action', 'joint_state', 'target_joint'):
                 vector = np.asarray(packet[key])
                 if vector.shape != (7,) or not np.isfinite(vector).all():

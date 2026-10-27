@@ -16,7 +16,7 @@ server 本机 RealSense → ROS bridge ← 跨机 DDS
 
 机器人 1 kHz FCI 通信只在 client 与 FR3 之间，使用 `enp114s0`（`172.16.0.100`）；不经过 server。Quest Streaming 继续使用 client 的 Wi-Fi。**server 不发布机械臂 raw command。**
 
-原 GELLO 的双机链路也是 client 控制、跨机 ROS、server 合并相机和状态后以 ZMQ 送 recorder；本次复用 `franka_lerobot_data_bridge`、RealSense publisher 和 `lerobot_collection.py`。Quest 左臂配置在 `config/data_collection/quest_left.yaml`，action 订阅 `/left/vr/accepted_joint_states`，两路图像为 `cam_left`、`cam_front`，采样率 15 Hz。
+原 GELLO 的双机链路也是 client 控制、跨机 ROS、server 合并相机和状态后以 ZMQ 送 recorder；本次复用 `franka_lerobot_data_bridge`、RealSense publisher 和 `lerobot_collection.py`。Quest 左臂配置在 `config/data_collection/quest_left.yaml`，action 订阅 `/left/vr/accepted_joint_states`，只采集左手相机 `cam_left`，采样率 15 Hz。Quest 专用相机配置为 `config/data_collection/quest_left_camera.yaml`；原 GELLO 相机启动配置不变。
 
 ## 网卡与配置
 
@@ -56,9 +56,9 @@ unset ROS_STATIC_PEERS
 1. 两端核对主仓库与 `gello_software` 子模块提交、ROS overlay、`franka_msgs` 消息定义、网卡地址和时钟同步；在 server 重建 data bridge 与相机 publisher。现有构建目录存在不等于源码已更新。
 2. 在独立 `ROS_DOMAIN_ID=173` 上，只使用 `/m2/...` 测试话题做双向 `std_msgs/String` 传输；不发布任何 `/<side>/vr/raw_joint_states` 或 GELLO raw-command。
 3. server 使用 `scripts/start_m2_test_bridge.sh` 监听 `/m2/...` 并在本机 `127.0.0.1:15555` 发布 ZMQ；client 运行 `data_collection.diagnostics.synthetic_ros`。server 使用 `data_collection.diagnostics.samples` 审核 schema、字段和频率。合成图像只验证协议，不证明真实相机已经可用。
-4. server 单独验证两路 RealSense 图像的名称、帧率和时间戳。然后在现场操作者启动左臂后，先运行不带 `--record` 的 Quest server 入口，检查 60 秒和 600 秒真实样本。
+4. server 单独验证 `cam_left` 图像的名称、帧率和时间戳。然后在现场操作者启动左臂后，先运行不带 `--record` 的 Quest server 入口，检查 60 秒和 600 秒真实样本。
 
-2026-10-27 已完成的无硬件结果：两机均能通过该 XML 创建 DDS 节点；`std_msgs/String` 在独立 domain 173 上双向收到。server 从当前源码重建两项 ROS 包成功，本机合成 bridge 审核 121/121 有效；client 发布跨机合成关节、末端与小图像，server 经 bridge 和本机 ZMQ 连续审核 60 秒，共 901/901 有效、0 无效、约 15.000 Hz，接收间隔最大约 67.4 ms。报告在 server 的 `outputs/m2/20261027-server-isolated/` 和 `outputs/m2/20261027-wired-crosshost-samples.json`。Humble/Jazzy 的 type-hash 兼容警告仍会出现；实际合成消息与样本已经通过，真实话题/QoS 尚待验证。
+2026-10-27 已完成的无硬件结果：两机均能通过该 XML 创建 DDS 节点；`std_msgs/String` 在独立 domain 173 上双向收到。server 从当前源码重建两项 ROS 包成功，本机合成 bridge 审核 121/121 有效；client 发布跨机合成关节、末端与小图像，server 经 bridge 和本机 ZMQ 连续审核 60 秒，共 901/901 有效、0 无效、约 15.000 Hz，接收间隔最大约 67.4 ms。报告在 server 的 `outputs/m2/20261027-server-isolated/` 和 `outputs/m2/20261027-wired-crosshost-samples.json`。这组历史数据使用旧的左手加前置双相机合成配置；当前左手单相机配置需重新验收。Humble/Jazzy 的 type-hash 兼容警告仍会出现；实际合成消息与样本已经通过，真实话题/QoS 尚待验证。
 
 第 4 步涉及真机，必须由现场操作者确认 Desk/FCI/工作空间后启动 client，且不属于本文的无硬件验证。录制 `FOLLOWING` 门控、回位/故障 episode 边界仍属 M3；在完成之前，不能把数据标为可用训练 episode。
 

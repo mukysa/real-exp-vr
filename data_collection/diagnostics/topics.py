@@ -25,7 +25,7 @@ def main():
         '/left/vr/accepted_joint_states': JointState,
         '/left/franka_robot_state_broadcaster/robot_state': FrankaRobotState,
         '/left/vr/source_status': String, '/left/vr/status': String,
-        '/cameras/cam_left/image_raw': Image, '/cameras/cam_front/image_raw': Image,
+        '/cameras/cam_left/image_raw': Image,
     }
     values = defaultdict(lambda: {'count': 0, 'max_interval_s': 0., 'last_monotonic': None,
                                   'max_header_age_s': None, 'min_header_age_s': None})

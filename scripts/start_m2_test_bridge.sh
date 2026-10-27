@@ -11,5 +11,4 @@ exec ros2 run franka_lerobot_data_bridge lerobot_data_bridge --ros-args \
   -r /left/joint_states:=/m2/left/joint_states \
   -r /left/vr/accepted_joint_states:=/m2/left/vr/accepted_joint_states \
   -r /left/franka_robot_state_broadcaster/robot_state:=/m2/left/franka_robot_state_broadcaster/robot_state \
-  -r /cameras/cam_left/image_raw:=/m2/cameras/cam_left/image_raw \
-  -r /cameras/cam_front/image_raw:=/m2/cameras/cam_front/image_raw
+  -r /cameras/cam_left/image_raw:=/m2/cameras/cam_left/image_raw

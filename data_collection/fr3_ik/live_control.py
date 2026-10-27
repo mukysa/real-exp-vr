@@ -378,7 +378,9 @@ class LeftLiveControl:
             and np.max(np.abs(self.return_reference.velocity)) <= 0.01
             and self.measured_q is not None
             and self.measured_dq is not None
-            and np.max(np.abs(self.measured_q - self.home_q)) <= 0.02
+            # The impedance controller can settle slightly away from its hold
+            # target. Require a stationary measured pose within 0.03 rad.
+            and np.max(np.abs(self.measured_q - self.home_q)) <= 0.03
             and np.max(np.abs(self.measured_dq)) <= 0.05
         ):
             self.state = "READY"

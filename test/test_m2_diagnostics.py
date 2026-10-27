@@ -18,9 +18,9 @@ def packet(stamp=100.):
         state=[0.] * 7, action=[0.] * 7, joint_state=[0.] * 7, target_joint=[0.] * 7,
         robot_state_dim=7, action_dim=7, joint_state_dim=7, target_joint_dim=7,
         ee_pose=pose, target_ee_pose=pose, delta_ee_pose=[0.] * 6,
-        camera_names=['cam_left', 'cam_front'],
+        camera_names=['cam_left'],
         cameras={name: dict(rgb=np.zeros((2, 3, 3), dtype=np.uint8), shape=[2, 3, 3], stamp_s=stamp)
-                 for name in ('cam_left', 'cam_front')},
+                 for name in ('cam_left',)},
         bridge_publish_s=stamp + 0.01,
         action_freshness={'left': {'stamp_s': stamp}},
         robot_state_freshness={'left_arm': {'stamp_s': stamp}},
@@ -38,7 +38,7 @@ def test_static_target_with_new_stamps_is_not_stale():
     assert result['observed_rate_hz'] == pytest.approx(15)
 
 
-@pytest.mark.parametrize('failure', ['stale', 'future', 'missing_camera', 'nan', 'wrong_source', 'backlog', 'skew'])
+@pytest.mark.parametrize('failure', ['stale', 'future', 'missing_camera', 'nan', 'wrong_source', 'backlog', 'extra_camera'])
 def test_bad_samples_are_reported(failure):
     value = copy.deepcopy(packet())
     if failure == 'stale':
@@ -46,13 +46,14 @@ def test_bad_samples_are_reported(failure):
     elif failure == 'future':
         value['action_freshness']['left']['stamp_s'] += 2
     elif failure == 'missing_camera':
-        del value['cameras']['cam_front']
+        del value['cameras']['cam_left']
     elif failure == 'nan':
         value['state'][0] = float('nan')
     elif failure == 'wrong_source':
         value['teleop_source'] = 'gello'
-    elif failure == 'skew':
-        value['cameras']['cam_front']['stamp_s'] -= 0.2
+    elif failure == 'extra_camera':
+        value['camera_names'].append('cam_right')
+        value['cameras']['cam_right'] = copy.deepcopy(value['cameras']['cam_left'])
     audit = SampleAudit(bridge_packet_readiness)
     audit.add(value, 1, 102 if failure == 'backlog' else 100.02)
     assert audit.report()['invalid'] == 1
