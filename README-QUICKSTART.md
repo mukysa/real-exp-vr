@@ -108,11 +108,11 @@ bash scripts/start_data_collection_server.sh \
   --teleop-source quest --left --arm --ros-domain-id 0
 ```
 
-server 当前的 ROS 采集包已按源码构建。若之后改动了 bridge 或相机源码，先在 server 执行 `bash scripts/build_data_collection_server.sh`。server 收到左臂实测状态、VR 状态和 `cam_left` 图像后，会在**按 Y 前**报告 `Quest left observation path ready before Y` 和 `Data-server stack is running`。此时再由你短按一次左 Y 接管并移动左手柄；`/left/vr/accepted_joint_states` 从这时开始发布，数据桥随后输出 ZMQ 样本。server 不初始化也不控制机械臂。
+server 当前的 ROS 采集包已按源码构建。若之后改动了 GELLO bridge 或相机源码，先在 server 执行 `bash scripts/build_data_collection_server.sh`。server 收到左臂实测状态、VR 状态和 `cam_left` 图像后，会在**按 Y 前**报告 `Quest left observation path ready before Y` 和 `Data-server stack is running`，同时输出零动作 ZMQ 观测样本。此时再由你短按一次左 Y 接管并移动左手柄；接管和回位期间样本使用真实的 `/left/vr/accepted_joint_states`。server 不初始化也不控制机械臂。
 
 ### 5.3 server：检查并录制数据
 
-先在 server 的第二个终端检查 60 秒 ZMQ 样本：
+先在 server 的第二个终端检查 60 秒 ZMQ 样本；按 Y 前即可开始检查：
 
 ```bash
 cd /home/pair1/real-exp-vr

@@ -311,14 +311,26 @@ if [[ "${teleop_source}" == "quest" ]]; then
 fi
 start_process "RealSense camera publisher" \
   ros2 launch franka_realsense_camera_publisher cameras.launch.py "${camera_launch_args[@]}"
-start_process "LeRobot data bridge" \
-  ros2 launch franka_lerobot_data_bridge bridge.launch.py \
-  "config_file:=${config_file}" \
-  "publish_host:=${bridge_host}" "publish_port:=${bridge_port}" \
-  "include_gripper:=$([[ "${gripper_mode}" == "gripper" ]] && echo true || echo false)" \
-  "include_hand:=$([[ "${gripper_mode}" == "hand" ]] && echo true || echo false)" \
-  "arm_mode:=${arm_mode}" \
-  "hand_telemetry_host:=${bridge_host}" "hand_telemetry_port:=${hand_telemetry_port}"
+if [[ "${teleop_source}" == "quest" ]]; then
+  # The standard bridge waits for accepted targets, which do not exist until Y.
+  # This read-only variant emits zero-action observations in READY/WAITING and
+  # keeps the strict accepted-target gate while FOLLOWING/RETURNING.
+  start_process "Quest observation bridge" \
+    env "PYTHONPATH=${repository_root}${PYTHONPATH:+:${PYTHONPATH}}" \
+    "${ros_python}" -m data_collection.quest_observation_bridge \
+    --ros-args --params-file "${config_file}" \
+    -p "publish_host:=${bridge_host}" -p "publish_port:=${bridge_port}" \
+    -p "hand_telemetry_host:=${bridge_host}" -p "hand_telemetry_port:=${hand_telemetry_port}"
+else
+  start_process "LeRobot data bridge" \
+    ros2 launch franka_lerobot_data_bridge bridge.launch.py \
+    "config_file:=${config_file}" \
+    "publish_host:=${bridge_host}" "publish_port:=${bridge_port}" \
+    "include_gripper:=$([[ "${gripper_mode}" == "gripper" ]] && echo true || echo false)" \
+    "include_hand:=$([[ "${gripper_mode}" == "hand" ]] && echo true || echo false)" \
+    "arm_mode:=${arm_mode}" \
+    "hand_telemetry_host:=${bridge_host}" "hand_telemetry_port:=${hand_telemetry_port}"
+fi
 
 # Keep one subscriber alive and surface child failures while waiting for DDS.
 wait_for_payload() {
@@ -387,7 +399,7 @@ if [[ "${teleop_source}" == "quest" ]]; then
     fi
     echo "Ready: ${topic} is publishing on the data server"
   done
-  echo "Quest left observation path ready before Y. Press left Y on the client to start accepted targets and bridge samples."
+  echo "Quest left observation path ready before Y; zero-action bridge samples are streaming. Press left Y on the client for accepted teleop targets."
 fi
 
 if [[ "${record}" -eq 1 ]]; then
