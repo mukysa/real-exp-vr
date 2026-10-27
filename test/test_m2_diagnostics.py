@@ -38,6 +38,22 @@ def test_static_target_with_new_stamps_is_not_stale():
     assert result['observed_rate_hz'] == pytest.approx(15)
 
 
+def test_quest_left_gripper_sample_is_accepted():
+    value = packet()
+    value['include_gripper'] = True
+    for key in ('state', 'action', 'joint_state', 'target_joint'):
+        value[key].append(1.0)
+    value['robot_state_dim'] = 8
+    value['action_dim'] = 8
+    value['joint_state_dim'] = 8
+    value['target_joint_dim'] = 8
+    value['gripper_action_representation'] = 'absolute_width'
+    audit = SampleAudit(bridge_packet_readiness)
+    audit.add(value, 0, 100.02)
+    result = audit.report()
+    assert result['valid'] == 1, result['errors']
+
+
 @pytest.mark.parametrize('failure', ['stale', 'future', 'missing_camera', 'nan', 'wrong_source', 'backlog', 'extra_camera'])
 def test_bad_samples_are_reported(failure):
     value = copy.deepcopy(packet())

@@ -3,17 +3,19 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/start_quest3_hardware.sh --left|--right|--duo --check-only
-       scripts/start_quest3_hardware.sh --left|--right|--duo --enable-hardware
+Usage: scripts/start_quest3_hardware.sh --left|--right|--duo [--gripper] --check-only
+       scripts/start_quest3_hardware.sh --left|--right|--duo [--gripper] --enable-hardware
 
 Physical left Touch Y toggles takeover and return for the selected arm(s).
 Both Touch controllers are tracked in every mode. Hardware mode starts only
 the selected FR3 controller(s): left=172.16.0.3, right=172.16.0.2.
+--left --gripper also homes the Franka Hand and maps left trigger to opening.
 EOF
 }
 
 mode=""
 action=""
+left_gripper_enabled=false
 for argument in "$@"; do
   case "${argument}" in
     --left|--right|--duo)
@@ -24,11 +26,15 @@ for argument in "$@"; do
       [[ -z "${action}" ]] || { usage >&2; exit 2; }
       action="${argument}"
       ;;
+    --gripper) left_gripper_enabled=true ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 [[ -n "${mode}" && -n "${action}" ]] || { usage >&2; exit 2; }
+[[ "${left_gripper_enabled}" == false || "${mode}" == left ]] || {
+  echo "Error: --gripper currently requires --left." >&2; exit 2;
+}
 
 case "${mode}" in
   left) sides=(left) ;;
@@ -70,10 +76,15 @@ controller_spawner="$(ros2 pkg prefix controller_manager)/lib/controller_manager
 [[ -x "${controller_spawner}" ]] || { echo "Error: controller spawner missing" >&2; exit 1; }
 [[ "$(ros2 pkg prefix franka_fr3_arm_controllers)" == "${controller_install}"* ]]
 [[ "$(ros2 pkg prefix franka_vr_adapter)" == "${quest_install}"* ]]
+if [[ "${left_gripper_enabled}" == true ]]; then
+  [[ "$(ros2 pkg prefix franka_gripper_manager)" == "${controller_install}"* ]] || {
+    echo "Error: Franka Hand manager missing from client ROS build." >&2; exit 1;
+  }
+fi
 bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" --global-left-y --dry-run
 
 if [[ "${action}" == "--check-only" ]]; then
-  echo "CHECK OK: mode=${mode}; both Touch inputs, left Y, selected IK and adapters configured."
+  echo "CHECK OK: mode=${mode}; gripper=${left_gripper_enabled}; both Touch inputs, left Y, selected IK and adapters configured."
   echo "No robot connection was opened."
   exit 0
 fi
@@ -97,6 +108,11 @@ for side in "${sides[@]}"; do
     exit 1
   }
 done
+if [[ "${left_gripper_enabled}" == true ]] && \
+  pgrep -af 'franka_gripper_client' | grep -Eq -- '-r __ns:=/left'; then
+  echo "Error: another left Franka Hand manager is running; stop it before --gripper." >&2
+  exit 1
+fi
 if ss -ltn | awk '{print $4}' | grep -Eq ':(8000|8001)$'; then
   echo "Error: Quest TCP port 8000 or 8001 is already in use." >&2
   exit 1
@@ -111,6 +127,7 @@ mkdir -p "${log_dir}"
 children=()
 topic_probe_pid=""
 hardware_pids=()
+gripper_pid=""
 declare -A hardware_side_by_pid
 cleanup() {
   trap - EXIT INT TERM
@@ -131,6 +148,11 @@ start_process() {
 }
 require_hardware_alive() {
   local pid side
+  if [[ -n "${gripper_pid}" ]] && ! kill -0 "${gripper_pid}" 2>/dev/null; then
+    echo "Error: left Franka Hand manager exited. Logs: ${log_dir}/gripper-left.log" >&2
+    tail -12 "${log_dir}/gripper-left.log" >&2 || true
+    return 1
+  fi
   for pid in "${hardware_pids[@]}"; do
     kill -0 "${pid}" 2>/dev/null || {
       side="${hardware_side_by_pid[$pid]}"
@@ -183,9 +205,13 @@ for side in "${sides[@]}"; do
   ip="172.16.0.3"
   [[ "${side}" == "right" ]] && ip="172.16.0.2"
   echo "Starting ${side^^} FR3 hardware controller (${ip})."
+  load_gripper=false
+  if [[ "${side}" == left && "${left_gripper_enabled}" == true ]]; then
+    load_gripper=true
+  fi
   start_process "hardware-${side}" ros2 launch franka_fr3_arm_controllers franka.launch.py \
     arm_id:=fr3 arm_prefix:="${side}" namespace:="${side}" \
-    robot_ip:="${ip}" load_gripper:=false \
+    robot_ip:="${ip}" load_gripper:="${load_gripper}" \
     use_fake_hardware:=false fake_sensor_commands:=false \
     joint_sources:=joint_states joint_state_rate:=30 deployment_mode:=false
   hardware_pids+=("${children[${#children[@]}-1]}")
@@ -219,13 +245,50 @@ for side in "${sides[@]}"; do
   }
 done
 
+if [[ "${left_gripper_enabled}" == true ]]; then
+  wait_for_topic /left/franka_gripper/joint_states sensor_msgs/msg/JointState
+  # GELLO's proven manager homes the Franka Hand before accepting commands.
+  start_process gripper-left ros2 launch franka_gripper_manager franka_gripper_client.launch.py \
+    config_file:=example_fr3_config_franka_hand.yaml
+  gripper_pid="${children[${#children[@]}-1]}"
+  deadline=$((SECONDS + 90))
+  while ! grep -q 'Gripper client initialized!' "${log_dir}/gripper-left.log"; do
+    require_hardware_alive
+    ((SECONDS < deadline)) || {
+      echo "Error: left Franka Hand homing/manager did not become ready." >&2
+      tail -15 "${log_dir}/gripper-left.log" >&2 || true
+      exit 1
+    }
+    sleep 0.2
+  done
+fi
+
 start_process quest_control ros2 launch franka_vr_adapter quest_live_control.launch.py \
-  mode:="${mode}" trace_dir:="${log_dir}" position_scale:=1.0 max_tcp_offset_m:=0.0
+  mode:="${mode}" trace_dir:="${log_dir}" position_scale:=1.0 max_tcp_offset_m:=0.0 \
+  left_gripper_enabled:="${left_gripper_enabled}"
 wait_for_port 8001
 for side in "${sides[@]}"; do
   wait_for_topic "/${side}/vr/source_status" std_msgs/msg/String
   wait_for_topic "/${side}/vr/status" std_msgs/msg/String
 done
+if [[ "${left_gripper_enabled}" == true ]]; then
+  wait_for_topic /left/vr/gripper_open_fraction std_msgs/msg/Float32
+  deadline=$((SECONDS + 30))
+  while true; do
+    require_hardware_alive
+    adapter_state="$(timeout 4s ros2 topic echo /left/vr/status --once \
+      --field data --no-daemon 2>/dev/null | head -1 || true)"
+    if [[ "${adapter_state}" == *'"have_robot_state":true'* ]]; then
+      break
+    fi
+    ((SECONDS < deadline)) || {
+      echo "Error: left VR adapter has no valid 7-joint arm state." >&2
+      echo "Last adapter status: ${adapter_state}" >&2
+      exit 1
+    }
+    sleep 0.2
+  done
+fi
 
 echo "Hardware chain ready: ${mode}. Left Y takes over selected arm(s); second Y returns."
 echo "Press Ctrl+C at any time to stop. Logs: ${log_dir}"

@@ -28,7 +28,7 @@ Required:
   --hand                Include 20-joint Wuji hand current and target angles.
 
 Options:
-  --teleop-source SOURCE Input source: gello (default) or quest (left arm-only).
+  --teleop-source SOURCE Input source: gello (default) or quest (left arm).
   --record              Start the LeRobot recorder on this server.
   --local-dir PATH      Dataset directory for --record (default: ./lerobot_data).
   --repo-id ID          LeRobot repo id for --record.
@@ -112,8 +112,12 @@ case "${teleop_source}" in
   *) die "unsupported teleop source: ${teleop_source}" ;;
 esac
 if [[ "${teleop_source}" == "quest" ]]; then
-  [[ "${arm_mode}" == "left" && "${gripper_mode}" == "arm" ]] || die "Quest collection currently supports only --left --arm"
-  repo_id="${repo_id:-local/franka_quest_left_teleop}"
+  [[ "${arm_mode}" == "left" && ( "${gripper_mode}" == "arm" || "${gripper_mode}" == "gripper" ) ]] || die "Quest collection currently supports only --left --arm or --left --gripper"
+  quest_task_name="franka_quest_left_teleop"
+  if [[ "${gripper_mode}" == "gripper" ]]; then
+    quest_task_name="franka_quest_left_gripper_teleop"
+  fi
+  repo_id="${repo_id:-local/${quest_task_name}}"
   [[ "${bridge_host_explicit}" -eq 1 ]] || bridge_host="127.0.0.1"
 else
   repo_id="${repo_id:-local/franka_gello_teleop}"
@@ -320,6 +324,8 @@ if [[ "${teleop_source}" == "quest" ]]; then
     "${ros_python}" -m data_collection.quest_observation_bridge \
     --ros-args --params-file "${config_file}" \
     -p "publish_host:=${bridge_host}" -p "publish_port:=${bridge_port}" \
+    -p "include_gripper:=$([[ "${gripper_mode}" == "gripper" ]] && echo true || echo false)" \
+    -p "task_name:=${quest_task_name}" \
     -p "hand_telemetry_host:=${bridge_host}" -p "hand_telemetry_port:=${hand_telemetry_port}"
 else
   start_process "LeRobot data bridge" \
@@ -366,6 +372,9 @@ wait_for_payload() {
 required_bridge_topics=()
 if [[ "${teleop_source}" == "quest" ]]; then
   required_bridge_topics=("/left/joint_states")
+  if [[ "${gripper_mode}" == "gripper" ]]; then
+    required_bridge_topics+=("/left/franka_gripper/joint_states")
+  fi
 else
   if [[ "${arm_mode}" == "duo" || "${arm_mode}" == "left" ]]; then
     required_bridge_topics+=("/left/joint_states" "/left/gello/raw_joint_states" "/left/gello/accepted_joint_states")
@@ -391,6 +400,9 @@ if [[ "${teleop_source}" == "quest" ]]; then
     "/left/franka_robot_state_broadcaster/robot_state|franka_msgs/msg/FrankaRobotState"
     "/cameras/cam_left/image_raw|sensor_msgs/msg/Image"
   )
+  if [[ "${gripper_mode}" == "gripper" ]]; then
+    quest_topics+=("/left/vr/gripper_open_fraction|std_msgs/msg/Float32")
+  fi
   for entry in "${quest_topics[@]}"; do
     topic="${entry%|*}"
     message_type="${entry#*|}"

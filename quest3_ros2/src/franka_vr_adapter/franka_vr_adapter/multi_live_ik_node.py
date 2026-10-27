@@ -16,7 +16,7 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_msgs.msg import String
+from std_msgs.msg import Float32, String
 
 
 def _repository_root() -> Path:
@@ -36,6 +36,7 @@ from data_collection.fr3_ik.live_control import LeftLiveControl  # noqa: E402
 from data_collection.fr3_ik.live_input import PairedQuestInput  # noqa: E402
 from data_collection.fr3_ik.mount_calibration import load_tabletop_calibration  # noqa: E402
 from data_collection.meta_quest.receiver import PoseReceiver  # noqa: E402
+from data_collection.meta_quest.gripper_mapping import trigger_to_open_fraction  # noqa: E402
 
 
 class MultiLiveIkNode(Node):
@@ -43,6 +44,7 @@ class MultiLiveIkNode(Node):
         super().__init__("quest_live_ik")
         defaults = (
             ("mode", "left"),
+            ("left_gripper_enabled", False),
             ("pose_host", "127.0.0.1"),
             ("pose_port", 8001),
             ("position_scale", 1.0),
@@ -58,6 +60,19 @@ class MultiLiveIkNode(Node):
         if self.mode not in {"left", "right", "duo"}:
             raise ValueError("mode must be left, right or duo")
         self.sides = ("left", "right") if self.mode == "duo" else (self.mode,)
+        self.left_gripper_enabled = bool(self.get_parameter("left_gripper_enabled").value)
+        if self.left_gripper_enabled and self.mode != "left":
+            raise ValueError("left gripper control currently requires left mode")
+        if self.left_gripper_enabled:
+            self.gripper_command_publisher = self.create_publisher(
+                Float32, "/left/gripper/gripper_client/target_gripper_width_percent", 10
+            )
+            self.gripper_record_publisher = self.create_publisher(
+                Float32, "/left/vr/gripper_open_fraction", 10
+            )
+            self.gripper_target = 1.0  # The gripper manager homes open at startup.
+            self.last_gripper_command_s = 0.0
+            self.last_gripper_record_s = 0.0
         self.input_timeout_s = float(self.get_parameter("input_timeout_s").value)
         clock_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
         calibrations, _, _ = load_tabletop_calibration(
@@ -121,7 +136,8 @@ class MultiLiveIkNode(Node):
         self.create_timer(0.5, self._status, callback_group=self._control_group)
         self.get_logger().info(
             f"Quest {self.mode} source ready: physical left Y toggles takeover/return; "
-            "both Touch controllers tracked; no gripper control"
+            "both Touch controllers tracked; left gripper enabled="
+            f"{self.left_gripper_enabled}"
         )
 
     @staticmethod
@@ -263,10 +279,32 @@ class MultiLiveIkNode(Node):
                 for side, update in updates.items():
                     if update.result is not None:
                         self._publish_result(side, update.result)
+            if self.left_gripper_enabled and self.cores["left"].state == "FOLLOWING":
+                try:
+                    self.gripper_target = trigger_to_open_fraction(
+                        frame.poses["left"].sample.grasp
+                    )
+                except ValueError:
+                    self.cores["left"]._fault("invalid physical left trigger")
         self._sync_measured()
         for core in self.cores.values():
             core.tick(time.monotonic())
         self._couple_faults()
+        if self.left_gripper_enabled:
+            self._publish_gripper(time.monotonic())
+
+    def _publish_gripper(self, now: float) -> None:
+        core = self.cores["left"]
+        if core.state == "FOLLOWING" and now - self.last_gripper_command_s >= 0.1:
+            left = self.input.latest.get("left")
+            if left is not None and now - left.received_monotonic_s <= self.input_timeout_s:
+                self.gripper_command_publisher.publish(Float32(data=self.gripper_target))
+                self.last_gripper_command_s = now
+        # The recording topic is separate: pre-Y observations need a target,
+        # but publishing it to the hardware topic would move the gripper.
+        if core.state != "FAULT" and now - self.last_gripper_record_s >= 0.05:
+            self.gripper_record_publisher.publish(Float32(data=self.gripper_target))
+            self.last_gripper_record_s = now
 
     def _status(self) -> None:
         now = time.monotonic()
@@ -289,6 +327,7 @@ class MultiLiveIkNode(Node):
                 "position_scale": core.position_scale,
                 "max_tcp_offset_m": core.max_tcp_offset_m if core.max_tcp_offset_m > 0 else None,
                 "translation_frame": core.translation_frame,
+                "left_gripper_enabled": self.left_gripper_enabled,
             }
             message = String()
             message.data = json.dumps(payload, separators=(",", ":"), sort_keys=True)

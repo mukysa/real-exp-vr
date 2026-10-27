@@ -3,6 +3,7 @@
 Usage:
     python data_collection/reset_pylibfranka.py --dataset-root data/my_dataset \
         --episode 0 --frame-index 0 --dry-run
+    python data_collection/reset_pylibfranka.py --left --dry-run
 
 Hardware warning: running without ``--dry-run`` commands real robots. Prefer a
 matching dataset frame when available; the fallback pose is specific to the
@@ -63,6 +64,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Reset both Franka arms to a dataset observation.state frame or a measured fallback pose."
     )
+    side = parser.add_mutually_exclusive_group()
+    side.add_argument("--left", action="store_true", help="Reset only the left arm and its gripper.")
+    side.add_argument("--right", action="store_true", help="Reset only the right arm and its gripper.")
     parser.add_argument("--ip-left", default="172.16.0.3", help="IP address of the Left Franka robot.")
     parser.add_argument("--ip-right", default="172.16.0.2", help="IP address of the Right Franka robot.")
     parser.add_argument(
@@ -97,6 +101,14 @@ def parse_args() -> argparse.Namespace:
         help="Print the selected reset target without moving the robots.",
     )
     return parser.parse_args()
+
+
+def selected_sides(args: argparse.Namespace) -> tuple[str, ...]:
+    if args.left:
+        return ("left",)
+    if args.right:
+        return ("right",)
+    return ("left", "right")
 
 
 def print_array(name: str, value: np.ndarray) -> None:
@@ -342,39 +354,46 @@ def move_gripper(robot_ip: str, width: float, arm_name: str, abort_event: mp.syn
         abort_event.set()
 
 
-def dry_run_summary(ip_left: str, ip_right: str, target: dict[str, Any]) -> None:
+def dry_run_summary(
+    ip_left: str, ip_right: str, target: dict[str, Any], sides: tuple[str, ...], skip_grippers: bool
+) -> None:
     print("Dry run summary")
     print("----------------")
     print(f"Target source: {target['source']}")
-    print(f"Left arm IP: {ip_left}")
-    print(f"Right arm IP: {ip_right}")
-    print_array("Left arm target qpos", target["left_arm"])
-    print_array("Right arm target qpos", target["right_arm"])
-    print_array("Left gripper target width", np.asarray([target["left_gripper"]], dtype=float))
-    print_array("Right gripper target width", np.asarray([target["right_gripper"]], dtype=float))
+    for side in sides:
+        print(f"{side.title()} arm IP: {ip_left if side == 'left' else ip_right}")
+        print_array(f"{side.title()} arm target qpos", target[f"{side}_arm"])
+        if not skip_grippers:
+            print_array(
+                f"{side.title()} gripper target width",
+                np.asarray([target[f"{side}_gripper"]], dtype=float),
+            )
 
 
 def main() -> None:
     args = parse_args()
     target = resolve_reset_target(args)
+    sides = selected_sides(args)
 
     if args.dry_run:
-        dry_run_summary(args.ip_left, args.ip_right, target)
+        dry_run_summary(args.ip_left, args.ip_right, target, sides, args.skip_grippers)
         return
 
     abort_event = mp.Event()
-    arm_processes = [
-        mp.Process(
-            target=arm_worker,
-            args=(args.ip_left, np.asarray(target["left_arm"], dtype=float), "Left Arm", abort_event),
-            name="left_arm_reset",
-        ),
-        mp.Process(
-            target=arm_worker,
-            args=(args.ip_right, np.asarray(target["right_arm"], dtype=float), "Right Arm", abort_event),
-            name="right_arm_reset",
-        ),
-    ]
+    arm_processes = []
+    for side in sides:
+        arm_processes.append(
+            mp.Process(
+                target=arm_worker,
+                args=(
+                    args.ip_left if side == "left" else args.ip_right,
+                    np.asarray(target[f"{side}_arm"], dtype=float),
+                    f"{side.title()} Arm",
+                    abort_event,
+                ),
+                name=f"{side}_arm_reset",
+            )
+        )
 
     for process in arm_processes:
         process.start()
@@ -386,13 +405,18 @@ def main() -> None:
         raise SystemExit("Arm reset aborted due to an error.")
 
     if not args.skip_grippers:
-        move_gripper(args.ip_left, float(target["left_gripper"]), "Left", abort_event)
-        move_gripper(args.ip_right, float(target["right_gripper"]), "Right", abort_event)
+        for side in sides:
+            move_gripper(
+                args.ip_left if side == "left" else args.ip_right,
+                float(target[f"{side}_gripper"]),
+                side.title(),
+                abort_event,
+            )
 
     if abort_event.is_set():
         raise SystemExit("Reset completed with errors.")
 
-    print("Dual-arm reset completed.")
+    print(f"{'Dual-arm' if len(sides) == 2 else sides[0].title() + '-arm'} reset completed.")
 
 
 if __name__ == "__main__":

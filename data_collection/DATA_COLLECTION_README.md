@@ -86,6 +86,15 @@ If you open a new shell after building, run `source install/setup.bash` again be
 
 Use the direct `pylibfranka` reset script when you want to return both robots to a dataset start pose before recording, replay, or deployment.
 
+Pass `--left` or `--right` to reset only that arm and its matching gripper.
+With neither option, the original dual-arm behavior remains the default.
+`--skip-grippers` leaves the selected gripper(s) unchanged. For example, to
+preview only the left arm's fallback target without connecting to either robot:
+
+```bash
+python3 data_collection/reset_pylibfranka.py --left --skip-grippers --dry-run
+```
+
 When a matching dataset is available, prefer selecting its `observation.state` frame. The script validates the expected 16-dimensional layout:
 
 - left arm joint positions

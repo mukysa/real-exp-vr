@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("action", ["--check-only", "--enable-hardware"])
-def test_quest_client_routes_without_gello_build(tmp_path, action):
+@pytest.mark.parametrize("data_mode", ["--arm", "--gripper"])
+def test_quest_client_routes_without_gello_build(tmp_path, action, data_mode):
     shutil.copy(ROOT / "scripts/start_data_collection_client.sh", tmp_path)
     config_dir = tmp_path.parent / "config" / "data_collection"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -18,24 +19,25 @@ def test_quest_client_routes_without_gello_build(tmp_path, action):
     (tmp_path / "start_quest3_hardware.sh").write_text('printf "%s\\n" "$@"\n')
     result = subprocess.run(
         ["bash", str(tmp_path / "start_data_collection_client.sh"),
-         "--teleop-source", "quest", "--left", "--arm", action],
+         "--teleop-source", "quest", "--left", data_mode, action],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
     assert "Quest collection DDS: wired client to server" in result.stdout
-    assert result.stdout.splitlines()[-2:] == ["--left", action]
+    expected = ["--left"] + (["--gripper"] if data_mode == "--gripper" else []) + [action]
+    assert result.stdout.splitlines()[-len(expected):] == expected
 
 
 @pytest.mark.parametrize("launcher", ["client", "server"])
 @pytest.mark.parametrize("modes", [["--right", "--arm"], ["--duo", "--arm"],
-                                   ["--left", "--gripper"], ["--left", "--hand"]])
+                                   ["--right", "--gripper"], ["--left", "--hand"]])
 def test_unsupported_quest_modes_fail_before_environment_setup(launcher, modes):
     result = subprocess.run(
         ["bash", str(ROOT / f"scripts/start_data_collection_{launcher}.sh"),
          "--teleop-source", "quest", *modes], capture_output=True, text=True,
     )
     assert result.returncode != 0
-    assert "only --left --arm" in result.stderr
+    assert "only --left --arm or --left --gripper" in result.stderr
 
 
 def test_quest_requires_explicit_hardware_action():
@@ -54,6 +56,7 @@ def test_quest_left_bridge_contract():
     assert params["left_arm_action_topic"] == "/left/vr/accepted_joint_states"
     assert not params["include_right_arm"]
     assert not params["include_gripper"]
+    assert params["left_gripper_action_topic"] == "/left/vr/gripper_open_fraction"
     assert not params["include_hand"]
     assert params["camera_1_enabled"]
     assert params["camera_1_name"] == "cam_left"
@@ -64,6 +67,13 @@ def test_quest_left_bridge_contract():
     assert camera["camera_1_enabled"] and camera["camera_1_name"] == "cam_left"
     assert camera["camera_1_serial"] == "260322270745"
     assert not camera["camera_2_enabled"] and not camera["camera_3_enabled"]
+
+
+@pytest.mark.parametrize("trigger,opening", [(0.0, 1.0), (0.25, 0.75), (1.0, 0.0), (-1.0, 1.0), (2.0, 0.0)])
+def test_left_trigger_maps_continuously_to_gripper_opening(trigger, opening):
+    from data_collection.meta_quest.gripper_mapping import trigger_to_open_fraction
+
+    assert trigger_to_open_fraction(trigger) == opening
 
 
 def test_quest_source_is_persisted_without_changing_legacy_gello_metadata():

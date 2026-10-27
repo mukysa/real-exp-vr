@@ -45,13 +45,14 @@ class SampleAudit:
             if not ready:
                 raise ValueError(reason)
             if (packet.get('teleop_source') != 'quest' or packet.get('arm_mode') != 'left'
-                    or packet.get('include_gripper') or packet.get('include_hand')):
-                raise ValueError('expected Quest left arm-only sample')
+                    or packet.get('include_hand')):
+                raise ValueError('expected Quest left arm/gripper sample')
             if set(packet['camera_names']) != {'cam_left'}:
                 raise ValueError('expected cam_left only')
+            expected_width = 8 if packet.get('include_gripper') else 7
             for key in ('state', 'action', 'joint_state', 'target_joint'):
                 vector = np.asarray(packet[key])
-                if vector.shape != (7,) or not np.isfinite(vector).all():
+                if vector.shape != (expected_width,) or not np.isfinite(vector).all():
                     raise ValueError(f'invalid {key}')
             publish = float(packet['bridge_publish_s'])
             action_stamp = float(packet['action_freshness']['left']['stamp_s'])

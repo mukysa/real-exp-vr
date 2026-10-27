@@ -12,7 +12,7 @@ if [[ "$#" -eq 1 && "$1" == "--help" ]]; then
   cat <<'EOF'
 Usage: ./scripts/start_data_collection_client.sh --duo|--left|--right --arm|--gripper|--hand [--teleop-source gello|quest] [--check-only|--enable-hardware]
 
-Quest currently supports only --left --arm and requires --check-only or
+Quest currently supports --left --arm or --left --gripper and requires --check-only or
 --enable-hardware. GELLO remains the default.
 
 Starts only the control-host teleoperation stack. On the data server run:
@@ -53,8 +53,8 @@ case "${teleop_source}" in
   *) echo "unsupported teleop source: ${teleop_source}" >&2; exit 2 ;;
 esac
 if [[ "${teleop_source}" == "quest" ]]; then
-  [[ "${arm_mode}" == "left" && "${data_mode}" == "arm" ]] || {
-    echo "Quest collection currently supports only --left --arm" >&2; exit 2;
+  [[ "${arm_mode}" == "left" && ( "${data_mode}" == "arm" || "${data_mode}" == "gripper" ) ]] || {
+    echo "Quest collection currently supports only --left --arm or --left --gripper" >&2; exit 2;
   }
   [[ -n "${quest_action}" ]] || {
     echo "Quest requires --check-only or explicit --enable-hardware" >&2; exit 2;
@@ -71,7 +71,9 @@ if [[ "${teleop_source}" == "quest" ]]; then
   export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
   unset ROS_STATIC_PEERS
   echo "Quest collection DDS: wired client to server via ${dds_config}"
-  exec bash "${script_dir}/start_quest3_hardware.sh" --left "${quest_action}"
+  gripper_option=()
+  [[ "${data_mode}" == "gripper" ]] && gripper_option=(--gripper)
+  exec bash "${script_dir}/start_quest3_hardware.sh" --left "${gripper_option[@]}" "${quest_action}"
 fi
 [[ -z "${quest_action}" ]] || { echo "hardware action flags require --teleop-source quest" >&2; exit 2; }
 
