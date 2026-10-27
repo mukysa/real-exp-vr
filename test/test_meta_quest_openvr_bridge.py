@@ -1,17 +1,46 @@
 from __future__ import annotations
 
 import math
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
 
 from data_collection.meta_quest.openvr_bridge import (
+    _AsyncKeepAwake,
     _controller_controls,
     _physical_controller_id,
     _rotation_matrix_to_quaternion,
     openvr_matrix_to_unity_pose,
     parse_args,
 )
+
+
+def test_slow_adb_keep_awake_does_not_block_pose_polling() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    attempts: list[bool] = []
+
+    def slow_update(active: bool) -> bool:
+        attempts.append(active)
+        entered.set()
+        release.wait(timeout=2.0)
+        return False
+
+    power = SimpleNamespace(active=False, update=slow_update, close=lambda: None)
+    keep_awake = _AsyncKeepAwake(power)
+    try:
+        start = time.monotonic()
+        keep_awake.update()
+        assert entered.wait(timeout=1.0)
+        for _ in range(30):
+            keep_awake.update()
+        assert time.monotonic() - start < 0.5
+        assert attempts == [True]
+    finally:
+        release.set()
+        keep_awake.close()
 
 
 def test_openvr_identity_pose_flips_forward_axis_for_unity_contract() -> None:

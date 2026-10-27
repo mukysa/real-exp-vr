@@ -16,6 +16,7 @@ import argparse
 import math
 from pathlib import Path
 import socket
+import threading
 import time
 from typing import Any, Sequence
 
@@ -182,10 +183,37 @@ def _physical_controller_id(system: Any, openvr: Any, side: str) -> int:
     return openvr.k_unTrackedDeviceIndexInvalid
 
 
-def _wait_for_alvr(session_path: Path, power: QuestKeepAwake) -> None:
+class _AsyncKeepAwake:
+    """Keep ADB startup and retries off the OpenVR pose polling thread."""
+
+    def __init__(self, power: QuestKeepAwake, retry_interval_s: float = 30.0) -> None:
+        self._power = power
+        self._retry_interval_s = retry_interval_s
+        self._last_attempt_s = float("-inf")
+        self._thread: threading.Thread | None = None
+
+    def update(self) -> None:
+        if self._power.active or (self._thread is not None and self._thread.is_alive()):
+            return
+        now = time.monotonic()
+        if now - self._last_attempt_s < self._retry_interval_s:
+            return
+        self._last_attempt_s = now
+        self._thread = threading.Thread(
+            target=self._power.update, args=(True,), daemon=True, name="quest-keep-awake"
+        )
+        self._thread.start()
+
+    def close(self) -> None:
+        if self._thread is not None:
+            self._thread.join(timeout=4.0)
+        self._power.close()
+
+
+def _wait_for_alvr(session_path: Path, power: _AsyncKeepAwake) -> None:
     last_report = 0.0
     while not alvr_is_streaming(session_path):
-        power.update(True)
+        power.update()
         now = time.monotonic()
         if now - last_report >= 5.0:
             print(
@@ -234,10 +262,10 @@ def run_bridge(args: argparse.Namespace) -> None:
             openvr.shutdown()
         return
 
-    power = QuestKeepAwake()
+    power = _AsyncKeepAwake(QuestKeepAwake())
     openvr_initialized = False
     try:
-        power.update(True)
+        power.update()
         if not args.no_alvr_wait:
             _wait_for_alvr(session_path, power)
 
@@ -259,7 +287,7 @@ def run_bridge(args: argparse.Namespace) -> None:
             last_ids: dict[str, int] = {}
             last_clutch: dict[str, bool] = {}
             while True:
-                power.update(True)
+                power.update()
                 if not args.no_alvr_wait and not alvr_is_streaming(session_path):
                     print(
                         "ALVR left Streaming state; stopping instead of emitting cached poses.",
