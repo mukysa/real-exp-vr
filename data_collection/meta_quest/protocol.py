@@ -98,6 +98,17 @@ def parse_pose_line(line: str) -> PoseSample | None:
     if not separator:
         return None
     raw_header_lower = raw_header.lower()
+    if raw_header_lower.startswith("right buttons"):
+        header, values = _header_and_values(stripped)
+        if len(values) != 3 or not 0 <= values[0] <= 1 or values[1] not in (0, 1) or values[2] not in (0, 1):
+            raise ProtocolError("right buttons require trigger in [0,1], B and A flags")
+        return PoseSample(
+            side="right", source="buttons", position=(0., 0., 0.),
+            quaternion_xyzw=(0., 0., 0., 1.), tracked=False,
+            grasp=values[0], clutch=bool(values[1]), record=bool(values[2]),
+            frame_id=_metadata(header, _FRAME_RE),
+            device_timestamp_ns=_metadata(header, _TIMESTAMP_RE), layout="right_buttons_v1",
+        )
     if not any(
         pose_label in raw_header_lower
         for pose_label in ("controller", "wrist", "head")

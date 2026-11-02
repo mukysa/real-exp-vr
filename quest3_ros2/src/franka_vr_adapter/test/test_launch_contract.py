@@ -69,4 +69,4 @@ def test_multi_arm_source_uses_left_y_and_both_calibrations() -> None:
     ast.parse(source)
     assert "PairedQuestInput(self.mode)" in source
     assert "world_from_base=calibrations[side]" in source
-    assert '"button": "physical left Y"' in source
+    assert '"button": "physical right B" if self.hand_arm else "physical left Y"' in source

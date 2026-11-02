@@ -345,6 +345,16 @@ def run_bridge(args: argparse.Namespace) -> None:
                         controller_ids[side] = controller_id
                         if controller_id != openvr.k_unTrackedDeviceIndexInvalid:
                             tracked = poses[controller_id]
+                            if args.hand_arm and side == "left":
+                                valid[side] += int(tracked.bDeviceIsConnected and tracked.bPoseIsValid)
+                                continue
+                            if args.hand_arm and side == "right" and tracked.bDeviceIsConnected:
+                                try:
+                                    _controller_controls(system, controller_id)
+                                except RuntimeError:
+                                    continue
+                                valid[side] += int(bool(system.isInputAvailable()))
+                                continue
                             if tracked.bDeviceIsConnected and tracked.bPoseIsValid:
                                 try:
                                     _controller_controls(system, controller_id)
@@ -354,7 +364,8 @@ def run_bridge(args: argparse.Namespace) -> None:
                     time.sleep(0.1)
                 for side in sides:
                     print(
-                        f"Physical {side} Touch: {valid[side]}/30 valid poses and button reads; "
+                        f"Physical {side} Touch: {valid[side]}/30 valid "
+                        f"{'button reads' if args.hand_arm and side == 'right' else 'poses' if args.hand_arm else 'poses and button reads'}; "
                         f"id={controller_ids[side]}",
                         flush=True,
                     )
@@ -405,6 +416,7 @@ def run_bridge(args: argparse.Namespace) -> None:
             next_poll = report_start
             last_ids: dict[str, int] = {}
             last_clutch: dict[str, bool] = {}
+            hand_arm_ids: dict[str, int] = {}
             while True:
                 power.update()
                 if not args.no_alvr_wait and not alvr_is_streaming(session_path):
@@ -459,6 +471,18 @@ def run_bridge(args: argparse.Namespace) -> None:
                     if controller_id == openvr.k_unTrackedDeviceIndexInvalid:
                         continue
                     current_ids[side] = controller_id
+                    if args.hand_arm:
+                        previous_id = hand_arm_ids.setdefault(side, controller_id)
+                        if previous_id != controller_id:
+                            raise RuntimeError("Hand-arm controller identity changed; restart required")
+                        if side == "right":
+                            if poses[controller_id].bDeviceIsConnected:
+                                grasp, clutch, record = _controller_controls(system, controller_id)
+                                line = (f"right buttons|f={frame_id}|t={timestamp_ns}:"
+                                        f"{grasp:.9g},{int(clutch)},{int(record)}")
+                                output.sendall(line.encode("utf-8") + b"\n")
+                                sent += 1
+                            continue
                     tracked = poses[controller_id]
                     if not tracked.bDeviceIsConnected or not tracked.bPoseIsValid:
                         continue
@@ -467,9 +491,12 @@ def run_bridge(args: argparse.Namespace) -> None:
                     if args.single_left and side != "left":
                         continue
                     left_y_button = args.single_left or (args.global_left_y and side == "left")
-                    grasp, clutch, record = _controller_controls(
-                        system, controller_id, single_left=left_y_button
-                    )
+                    if args.hand_arm:
+                        grasp, clutch, record = 0.0, False, False
+                    else:
+                        grasp, clutch, record = _controller_controls(
+                            system, controller_id, single_left=left_y_button
+                        )
                     if left_y_button and last_clutch.get(side) != clutch:
                         print(f"Left Y clutch={'pressed' if clutch else 'released'}", flush=True)
                         last_clutch[side] = clutch
@@ -518,6 +545,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--side", choices=("both", "left", "right"), default="both")
     parser.add_argument("--single-left", action="store_true", help="left controller only; use Y as clutch")
     parser.add_argument("--global-left-y", action="store_true", help="relay both controllers; left Y is the control toggle")
+    parser.add_argument("--hand-arm", action="store_true", help="left pose; independent right B/A/trigger")
     parser.add_argument("--poll-hz", type=float, default=30.0)
     parser.add_argument("--report-interval-s", type=float, default=5.0)
     parser.add_argument("--alvr-session", default="~/.config/alvr/session.json")
@@ -537,6 +565,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="wait up to this many seconds for a full 30/30 physical Touch window",
     )
     args = parser.parse_args(argv)
+    if args.hand_arm and (args.single_left or args.global_left_y):
+        parser.error("--hand-arm cannot be combined with legacy control profiles")
+    if args.hand_arm:
+        args.side = "both"
     if args.single_left and args.global_left_y:
         parser.error("--single-left and --global-left-y are mutually exclusive")
     if args.single_left:

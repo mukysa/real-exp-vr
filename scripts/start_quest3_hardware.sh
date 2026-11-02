@@ -3,12 +3,13 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/start_quest3_hardware.sh --left|--right|--duo [--gripper] --check-only
-       scripts/start_quest3_hardware.sh --left|--right|--duo [--gripper] --enable-hardware
+Usage: scripts/start_quest3_hardware.sh --left|--right|--duo [--gripper|--hand-arm] --check-only
+       scripts/start_quest3_hardware.sh --left|--right|--duo [--gripper|--hand-arm] --enable-hardware
 
-Physical left Touch Y toggles takeover and return for the selected arm(s).
-Both Touch controllers are tracked in every mode. Hardware mode starts only
+By default physical left Touch Y toggles takeover and return for the selected arm(s).
+Both Touch controllers are read in every mode. Hardware mode starts only
 the selected FR3 controller(s): left=172.16.0.3, right=172.16.0.2.
+--hand-arm: left arm only, left pose, right B takeover/return, A record/save, trigger discard.
 --left --gripper also homes the Franka Hand and maps left trigger to opening.
 Input-only OpenVR; no SAPIEN rendering or headset video is required.
 --pose-reference=headset-start-position optionally freezes the initial headset
@@ -20,6 +21,7 @@ EOF
 mode=""
 action=""
 left_gripper_enabled=false
+hand_arm=false
 pose_reference=standing
 for argument in "$@"; do
   case "${argument}" in
@@ -32,6 +34,7 @@ for argument in "$@"; do
       action="${argument}"
       ;;
     --gripper) left_gripper_enabled=true ;;
+    --hand-arm) hand_arm=true ;;
     --pose-reference=headset-start-position|--pose-reference=standing)
       pose_reference="${argument#--pose-reference=}" ;;
     --help|-h) usage; exit 0 ;;
@@ -42,6 +45,10 @@ done
 [[ "${left_gripper_enabled}" == false || "${mode}" == left ]] || {
   echo "Error: --gripper currently requires --left." >&2; exit 2;
 }
+
+if [[ "${hand_arm}" == true && ( "${mode}" != left || "${left_gripper_enabled}" == true ) ]]; then
+  echo "Error: --hand-arm requires --left without --gripper." >&2; exit 2;
+fi
 
 case "${mode}" in
   left) sides=(left) ;;
@@ -89,16 +96,17 @@ if [[ "${left_gripper_enabled}" == true ]]; then
   }
 fi
 bridge_args=(--global-left-y --pose-reference "${pose_reference}")
+[[ "${hand_arm}" == false ]] || bridge_args=(--hand-arm --pose-reference "${pose_reference}")
 bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" "${bridge_args[@]}" --dry-run
 
 if [[ "${action}" == "--check-only" ]]; then
-  echo "CHECK OK: mode=${mode}; gripper=${left_gripper_enabled}; both Touch inputs, left Y, selected IK and adapters configured."
+  echo "CHECK OK: mode=${mode}; gripper=${left_gripper_enabled}; hand_arm=${hand_arm}; both Touch inputs, selected takeover button, selected IK and adapters configured."
   echo "No robot connection was opened."
   exit 0
 fi
 
 touch_check="--check-both-touch"
-[[ "${mode}" == "left" ]] && touch_check="--check-left-touch"
+[[ "${mode}" == "left" && "${hand_arm}" == false ]] && touch_check="--check-left-touch"
 bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" \
   "${bridge_args[@]}" "${touch_check}" --touch-wait-s 300
 
@@ -273,7 +281,7 @@ fi
 
 start_process quest_control ros2 launch franka_vr_adapter quest_live_control.launch.py \
   mode:="${mode}" trace_dir:="${log_dir}" position_scale:=1.0 max_tcp_offset_m:=0.0 \
-  left_gripper_enabled:="${left_gripper_enabled}"
+  left_gripper_enabled:="${left_gripper_enabled}" hand_arm:="${hand_arm}"
 wait_for_port 8001
 for side in "${sides[@]}"; do
   wait_for_topic "/${side}/vr/source_status" std_msgs/msg/String
@@ -298,7 +306,11 @@ if [[ "${left_gripper_enabled}" == true ]]; then
   done
 fi
 
-echo "Hardware chain ready: ${mode}. Left Y takes over selected arm(s); second Y returns."
+if [[ "${hand_arm}" == true ]]; then
+  echo "Hardware chain ready: HAND-ARM left pose only; right B takeover/return; right A record/save; right trigger discard."
+else
+  echo "Hardware chain ready: ${mode}. Left Y takes over selected arm(s); second Y returns."
+fi
 echo "Press Ctrl+C at any time to stop. Logs: ${log_dir}"
 reference_args=()
 if [[ "${pose_reference}" != standing ]]; then

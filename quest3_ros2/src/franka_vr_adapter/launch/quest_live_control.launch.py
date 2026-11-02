@@ -17,6 +17,9 @@ def _nodes(context):
     position_scale = float(LaunchConfiguration("position_scale").perform(context))
     max_tcp_offset_m = float(LaunchConfiguration("max_tcp_offset_m").perform(context))
     left_gripper_enabled = LaunchConfiguration("left_gripper_enabled").perform(context).lower() == "true"
+    hand_arm = LaunchConfiguration("hand_arm").perform(context).lower() == "true"
+    if hand_arm and (mode != "left" or left_gripper_enabled):
+        raise ValueError("hand_arm requires left arm without gripper")
     nodes = []
     for side in sides:
         nodes.append(Node(
@@ -55,6 +58,9 @@ def _nodes(context):
         parameters=[{
             "mode": mode,
             "left_gripper_enabled": left_gripper_enabled,
+            "hand_arm": hand_arm,
+            "trigger_press": float(LaunchConfiguration("trigger_press").perform(context)),
+            "trigger_release": float(LaunchConfiguration("trigger_release").perform(context)),
             "position_scale": position_scale,
             "max_tcp_offset_m": max_tcp_offset_m,
             "measured_timeout_s": 1.0,
@@ -68,6 +74,9 @@ def _nodes(context):
 def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         DeclareLaunchArgument("mode", default_value="left"),
+        DeclareLaunchArgument("hand_arm", default_value="false"),
+        DeclareLaunchArgument("trigger_press", default_value="0.75"),
+        DeclareLaunchArgument("trigger_release", default_value="0.25"),
         DeclareLaunchArgument("left_gripper_enabled", default_value="false"),
         DeclareLaunchArgument("trace_dir", default_value="/tmp/quest3-vr"),
         DeclareLaunchArgument("position_scale", default_value="1.0"),

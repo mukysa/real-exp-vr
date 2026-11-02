@@ -21,6 +21,7 @@ if str(LOCAL_LEROBOT_SRC) not in sys.path:
     sys.path.insert(0, str(LOCAL_LEROBOT_SRC))
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from data_collection.meta_quest.record_control import RecorderControl
 
 from utils.dataset_stats import ensure_dataset_stats, normalize_episode_metadata
 from utils.fr3_kinematics import (
@@ -146,7 +147,13 @@ def parse_args() -> argparse.Namespace:
             f"(default: {DEFAULT_BRIDGE_READY_TIMEOUT_SEC:g})."
         ),
     )
-    return parser.parse_args()
+    parser.add_argument("--hand-arm", action="store_true", help="left arm test: right A record/save, trigger discard; keyboard remains available")
+    parser.add_argument("--record-control-port", type=int, default=5559,
+                        help="local Quest relay port; used only with --hand-arm")
+    args = parser.parse_args()
+    if not 1 <= args.record_control_port <= 65535:
+        parser.error("--record-control-port must be between 1 and 65535")
+    return args
 
 
 def bridge_packet_readiness(packet: Any) -> tuple[bool, str]:
@@ -666,6 +673,8 @@ def main() -> None:
     latest_packet_received_at: float | None = None
     last_invalid_packet_warning_at = 0.0
     commands = start_command_listener()
+    control = (RecorderControl(context, f"tcp://127.0.0.1:{args.record_control_port}")
+               if args.hand_arm else None)
 
     print(f"Listening for ROS 2 bridge samples on tcp://{args.host}:{args.port}")
     print("Episode controls:")
@@ -673,6 +682,8 @@ def main() -> None:
     print("  e + Enter: end and save the current episode")
     print("  d + Enter: discard the current episode")
     print("  q + Enter: quit the recorder")
+    if control:
+        print("HAND-ARM: right A starts/saves; right trigger discards. Waiting for relay/source status.")
 
     try:
         while True:
@@ -693,54 +704,96 @@ def main() -> None:
                         print(f"Ignoring invalid bridge packet: {packet_reason}", file=sys.stderr)
                         last_invalid_packet_warning_at = now
 
+            if control:
+                control.publish()
+                for event in control.drain():
+                    commands.put(event)
             try:
                 while True:
                     command = commands.get_nowait()
-                    if command == "s":
-                        if recording_active:
-                            print("Already recording.")
+                    event = command if isinstance(command, dict) else None
+                    if control and event is not None:
+                        rejected = control.validate(event)
+                        if rejected:
+                            control.reject(rejected, event)
+                            print("Recording command rejected: " + rejected)
                             continue
-                        ready, reason = bridge_is_ready(
-                            latest_packet,
-                            latest_packet_received_at,
-                            time.monotonic(),
-                            args.bridge_ready_timeout,
-                        )
-                        if not ready:
-                            print(
-                                "Cannot start recording: "
-                                f"{reason}. Check that the LeRobot bridge is publishing "
-                                "the selected arm/end-effector data."
+                        command = "d" if event["operation"] == "discard" else ("e" if recording_active else "s")
+                    if control and control.state == "error" and command not in {"e", "d", "q"}:
+                        control.reject("save failed: retry e, discard d, or quit q before starting", event)
+                        continue
+                    if control:
+                        control.begin(command, event)
+                    outcome = "completed"
+                    detail = str(command)
+                    try:
+                        if command == "s":
+                            if recording_active:
+                                print("Already recording.")
+                                continue
+                            ready, reason = bridge_is_ready(
+                                latest_packet,
+                                latest_packet_received_at,
+                                time.monotonic(),
+                                args.bridge_ready_timeout,
                             )
-                            continue
-                        if dataset is not None and dataset.has_pending_frames():
-                            dataset.clear_episode_buffer()
-                        pending_packet = None
-                        recording_active = True
-                        print("Recording started.")
-                    elif command == "e":
-                        if dataset is None or not dataset.has_pending_frames():
+                            if control and ready:
+                                if not control.following():
+                                    ready, reason = False, "left arm is not FOLLOWING with fresh right input"
+                                elif (latest_packet.get("teleop_source") != "quest"
+                                      or latest_packet.get("arm_mode") != "left"
+                                      or latest_packet.get("include_gripper") or latest_packet.get("include_hand")):
+                                    ready, reason = False, "--hand-arm requires Quest left arm-only samples"
+                            if not ready:
+                                outcome, detail = "rejected", reason
+                                print(
+                                    "Cannot start recording: "
+                                    f"{reason}. Check that the LeRobot bridge is publishing "
+                                    "the selected arm/end-effector data."
+                                )
+                                continue
+                            if dataset is not None and dataset.has_pending_frames():
+                                dataset.clear_episode_buffer()
+                            pending_packet = None
+                            recording_active = True
+                            detail = "Recording started."
+                            print(detail)
+                        elif command == "e":
+                            if dataset is None or not dataset.has_pending_frames():
+                                recording_active = False
+                                pending_packet = None
+                                outcome, detail = "empty", "No recorded frames to save."
+                                print(detail)
+                                continue
+                            dataset.save_episode()
+                            episode_count += 1
                             recording_active = False
                             pending_packet = None
-                            print("No recorded frames to save.")
-                            continue
-                        dataset.save_episode()
-                        episode_count += 1
-                        recording_active = False
-                        pending_packet = None
-                        print(f"Episode {episode_count} saved to {dataset.root}")
-                    elif command == "d":
-                        recording_active = False
-                        pending_packet = None
-                        if dataset is not None and dataset.has_pending_frames():
-                            dataset.clear_episode_buffer()
-                            print("Current episode discarded.")
+                            detail = f"Episode {episode_count} saved to {dataset.root}"
+                            print(detail)
+                        elif command == "d":
+                            recording_active = False
+                            pending_packet = None
+                            if dataset is not None and dataset.has_pending_frames():
+                                dataset.clear_episode_buffer()
+                                detail = "Current episode discarded."
+                                print(detail)
+                            else:
+                                detail = "No buffered episode to discard."
+                                print(detail)
+                        elif command == "q":
+                            raise KeyboardInterrupt
                         else:
-                            print("No buffered episode to discard.")
-                    elif command == "q":
-                        raise KeyboardInterrupt
-                    else:
-                        print("Unknown command. Use: s, e, d, q")
+                            print("Unknown command. Use: s, e, d, q")
+                    except Exception as exc:
+                        if control is None:
+                            raise
+                        recording_active = False
+                        control.finish("error", "failed", f"{command}: {exc}")
+                        print(f"Recording operation failed; buffer retained: {exc}", file=sys.stderr)
+                    finally:
+                        if control and control.state != "error":
+                            control.finish("recording" if recording_active else "idle", outcome, detail)
             except Empty:
                 pass
 
@@ -804,6 +857,8 @@ def main() -> None:
         if dataset is not None:
             finalize_dataset(dataset, args.repo_id)
     finally:
+        if control:
+            control.close()
         socket.close(0)
         context.term()
 

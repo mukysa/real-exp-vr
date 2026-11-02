@@ -1,14 +1,16 @@
-"""One OpenVR stream, one left-Y switch, and selected FR3 strict-IK sources."""
+"""One OpenVR stream and selected FR3 strict-IK sources with opt-in hand-arm input."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 import json
+import re
 from pathlib import Path
 from queue import Empty
 import sys
 from threading import Lock
 import time
+import uuid
 
 import numpy as np
 import rclpy
@@ -33,6 +35,7 @@ ROOT = _repository_root()
 from data_collection.fr3_ik.interfaces import ik_result_to_dict  # noqa: E402
 from data_collection.fr3_ik.kinematics import Kinematics  # noqa: E402
 from data_collection.fr3_ik.live_control import LeftLiveControl  # noqa: E402
+from data_collection.meta_quest.hand_arm_input import HandArmInput
 from data_collection.fr3_ik.live_input import PairedQuestInput  # noqa: E402
 from data_collection.fr3_ik.mount_calibration import load_tabletop_calibration  # noqa: E402
 from data_collection.meta_quest.receiver import PoseReceiver  # noqa: E402
@@ -45,6 +48,9 @@ class MultiLiveIkNode(Node):
         defaults = (
             ("mode", "left"),
             ("left_gripper_enabled", False),
+            ("hand_arm", False),
+            ("trigger_press", 0.75),
+            ("trigger_release", 0.25),
             ("pose_host", "127.0.0.1"),
             ("pose_port", 8001),
             ("position_scale", 1.0),
@@ -61,6 +67,9 @@ class MultiLiveIkNode(Node):
             raise ValueError("mode must be left, right or duo")
         self.sides = ("left", "right") if self.mode == "duo" else (self.mode,)
         self.left_gripper_enabled = bool(self.get_parameter("left_gripper_enabled").value)
+        self.hand_arm = bool(self.get_parameter("hand_arm").value)
+        if self.hand_arm and (self.mode != "left" or self.left_gripper_enabled):
+            raise ValueError("hand_arm requires left arm without gripper")
         if self.left_gripper_enabled and self.mode != "left":
             raise ValueError("left gripper control currently requires left mode")
         if self.left_gripper_enabled:
@@ -128,16 +137,30 @@ class MultiLiveIkNode(Node):
         )
         self.subscription = self.receiver.subscribe(256)
         self.receiver.start()
-        self.input = PairedQuestInput(self.mode)
+        self.input = (HandArmInput(
+            timeout_s=self.input_timeout_s,
+            trigger_press=float(self.get_parameter("trigger_press").value),
+            trigger_release=float(self.get_parameter("trigger_release").value),
+        ) if self.hand_arm else PairedQuestInput(self.mode))
+        if self.hand_arm:
+            self.record_session = uuid.uuid4().hex
+            self.record_sequence = 0
+            self.record_status = None
+            self.record_status_at = 0.0
+            self.input_generation = 0
+            self.record_event_publisher = self.create_publisher(String, "/left/vr/record_event", 10)
+            self.create_subscription(String, "/left/vr/record_status", self._on_record_status,
+                                     10, callback_group=self._control_group)
         self.y_blocked_until_release = False
         self.result_counts = {side: 0 for side in self.sides}
         self.last_status = {side: ("", "") for side in self.sides}
         self.create_timer(0.01, self._drain, callback_group=self._control_group)
         self.create_timer(0.5, self._status, callback_group=self._control_group)
+        input_description = ("left pose/right buttons required" if self.hand_arm
+                             else "both Touch controllers tracked")
         self.get_logger().info(
-            f"Quest {self.mode} source ready: physical left Y toggles takeover/return; "
-            "both Touch controllers tracked; left gripper enabled="
-            f"{self.left_gripper_enabled}"
+            f"Quest {self.mode} source ready: physical {'right B' if self.hand_arm else 'left Y'} toggles takeover/return; "
+            f"{input_description}; left gripper enabled={self.left_gripper_enabled}"
         )
 
     @staticmethod
@@ -183,7 +206,7 @@ class MultiLiveIkNode(Node):
                 core.update_measured(*measured[side])
 
     def _on_adapter_status(self, side: str, message: String) -> None:
-        if self.mode != "duo":
+        if self.mode != "duo" and not getattr(self, "hand_arm", False):
             return
         try:
             status = json.loads(message.data)
@@ -196,6 +219,12 @@ class MultiLiveIkNode(Node):
                 self.adapter_faults.setdefault(side, str(status.get("reason", "adapter stopped")))
 
     def _couple_faults(self) -> bool:
+        if getattr(self, "hand_arm", False):
+            with self._adapter_lock:
+                faults = dict(self.adapter_faults)
+            if faults:
+                self.cores["left"]._fault("left adapter stopped; restart required: " + faults["left"])
+            return self.cores["left"].state == "FAULT"
         if self.mode != "duo":
             return any(core.state == "FAULT" for core in self.cores.values())
         with self._adapter_lock:
@@ -231,15 +260,25 @@ class MultiLiveIkNode(Node):
                 break
         frame = self.input.take()
         now = time.monotonic()
-        left = self.input.latest.get("left")
+        hand_arm = getattr(self, "hand_arm", False)
+        if hand_arm:
+            self._publish_record_events(now)
+            # In the test mode a latched fault is never converted into a
+            # recovery return by B. Recording end/discard remains available.
+            if self.cores["left"].state == "FAULT":
+                frame = None
+        control = self.input.latest.get("right" if hand_arm else "left")
         if (
-            left is None or now - left.received_monotonic_s > self.input_timeout_s
+            control is None or now - control.received_monotonic_s > self.input_timeout_s
         ) and any(core.state in {"FOLLOWING", "RETURNING"} for core in self.cores.values()):
             for core in self.cores.values():
-                core._fault("physical left Y controller stale; both arms halted")
-        self._couple_faults()
+                core._fault("physical right buttons stale; restart required" if hand_arm else "physical left Y controller stale; both arms halted")
+        if self._couple_faults() and hand_arm:
+            frame = None
         if frame is not None:
             y = frame.left_y
+            if hand_arm and not self.input.control_fresh(now):
+                y = False
             if self.y_blocked_until_release:
                 y = False
                 if not self.input.left_y:
@@ -293,6 +332,41 @@ class MultiLiveIkNode(Node):
         if self.left_gripper_enabled:
             self._publish_gripper(time.monotonic())
 
+    def _on_record_status(self, message: String) -> None:
+        try:
+            status = json.loads(message.data)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(status, dict):
+            return
+        self.record_status, self.record_status_at = status, time.monotonic()
+        display = (status.get("recorder_id"), status.get("revision"), status.get("state"),
+                   status.get("result"), status.get("detail"))
+        if display != getattr(self, "_last_record_display", None):
+            self.get_logger().info("RECORDER " + json.dumps(status, ensure_ascii=False))
+            self._last_record_display = display
+
+    def _publish_record_events(self, now: float) -> None:
+        if self.input_generation != self.input.generation:
+            if self.input_generation and self.cores["left"].state in {"FOLLOWING", "RETURNING"}:
+                self.cores["left"]._fault("right button stream changed or resumed after timeout; restart required")
+            self.input_generation = self.input.generation
+            self.record_session = uuid.uuid4().hex
+        for event in self.input.pop_events(now):
+            status = self.record_status
+            if (not status or now - self.record_status_at > 1.0
+                    or status.get("state") not in {"idle", "recording"}):
+                self.get_logger().warning("Recording command rejected: recorder unavailable or busy")
+                continue
+            self.record_sequence += 1
+            payload = {
+                "session": self.record_session, "sequence": self.record_sequence,
+                "operation": event.operation, "recorder_id": status.get("recorder_id"),
+                "revision": status.get("revision"),
+                "expires_at": time.time() + max(0.0, 1.0 - (now - event.received_monotonic_s)),
+            }
+            self.record_event_publisher.publish(String(data=json.dumps(payload, allow_nan=False)))
+
     def _publish_gripper(self, now: float) -> None:
         core = self.cores["left"]
         if core.state == "FOLLOWING" and now - self.last_gripper_command_s >= 0.1:
@@ -308,18 +382,30 @@ class MultiLiveIkNode(Node):
 
     def _status(self) -> None:
         now = time.monotonic()
+        if self.hand_arm and now - self.record_status_at > 1.0:
+            if getattr(self, "_last_record_display", None) != "unavailable":
+                self.get_logger().warning("RECORDER unavailable: relay/recorder heartbeat missing; keyboard remains available")
+                self._last_record_display = "unavailable"
         for side, core in self.cores.items():
+            reason = core.reason
+            if self.hand_arm:
+                reason = re.sub(r"\bY\b", "B", reason.replace("left Y", "right B"))
             payload = {
                 "mode": self.mode,
                 "side": side,
                 "state": core.state,
-                "reason": core.reason,
+                "reason": reason,
                 "result_count": self.result_counts[side],
-                "button": "physical left Y",
-                "left_y_pressed": self.input.left_y,
+                "button": "physical right B" if self.hand_arm else "physical left Y",
+                "hand_arm": self.hand_arm,
+                "right_control_fresh": self.input.control_fresh(now) if self.hand_arm else False,
+                "generated_unix_s": time.time(),
+                "record_session": self.record_session if self.hand_arm else None,
+                "left_y_pressed": False if self.hand_arm else self.input.left_y,
                 "right_b_pressed": self.input.right_b,
                 "tracked_controllers": {
                     hand: hand in self.input.latest
+                    and self.input.latest[hand].sample.tracked
                     and now - self.input.latest[hand].received_monotonic_s <= self.input_timeout_s
                     for hand in ("left", "right")
                 },
@@ -329,10 +415,13 @@ class MultiLiveIkNode(Node):
                 "translation_frame": core.translation_frame,
                 "left_gripper_enabled": self.left_gripper_enabled,
             }
+            if self.hand_arm:
+                payload["recorder"] = (self.record_status if now - self.record_status_at <= 1.0
+                                       else {"state": "unavailable", "detail": "recorder heartbeat missing"})
             message = String()
             message.data = json.dumps(payload, separators=(",", ":"), sort_keys=True)
             self.status_publishers[side].publish(message)
-            current = (core.state, core.reason)
+            current = (core.state, reason)
             if current != self.last_status[side]:
                 self.get_logger().info(f"{side} {current[0]}: {current[1]}")
                 self.last_status[side] = current

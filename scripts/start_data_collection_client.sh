@@ -14,6 +14,8 @@ Usage: ./scripts/start_data_collection_client.sh --duo|--left|--right --arm|--gr
 
 Quest currently supports --left --arm or --left --gripper and requires --check-only or
 --enable-hardware. GELLO remains the default.
+Use --teleop-source quest --left --hand-arm for left pose/right B/A/trigger testing.
+--hand-arm implies --arm and is incompatible with --gripper/--hand.
 
 Starts only the control-host teleoperation stack. On the data server run:
   ./scripts/start_data_collection_server.sh --duo|--left|--right --arm|--gripper|--hand [--teleop-source gello|quest] [--record]
@@ -25,6 +27,7 @@ arm_mode=""
 data_mode=""
 teleop_source="gello"
 quest_action=""
+hand_arm=false
 while [[ "$#" -gt 0 ]]; do
   argument="$1"
   shift
@@ -37,6 +40,7 @@ while [[ "$#" -gt 0 ]]; do
       [[ -z "${data_mode}" ]] || { echo "choose only one data mode" >&2; exit 2; }
       data_mode="${argument#--}"
       [[ "${data_mode}" != "no-gripper" ]] || data_mode="arm" ;;
+    --hand-arm) hand_arm=true ;;
     --teleop-source)
       [[ "$#" -gt 0 ]] || { echo "--teleop-source requires gello or quest" >&2; exit 2; }
       teleop_source="$1"; shift ;;
@@ -46,6 +50,12 @@ while [[ "$#" -gt 0 ]]; do
     *) echo "unknown argument: ${argument}" >&2; exit 2 ;;
   esac
 done
+if [[ "${hand_arm}" == true ]]; then
+  [[ -n "${data_mode}" ]] || data_mode=arm
+  [[ "${teleop_source}" == quest && "${arm_mode}" == left && "${data_mode}" == arm ]] || {
+    echo "--hand-arm requires --teleop-source quest --left and arm-only mode" >&2; exit 2;
+  }
+fi
 [[ -n "${arm_mode}" && -n "${data_mode}" ]] || { echo "both arm and data modes are required" >&2; exit 2; }
 
 case "${teleop_source}" in
@@ -73,6 +83,7 @@ if [[ "${teleop_source}" == "quest" ]]; then
   echo "Quest collection DDS: wired client to server via ${dds_config}"
   gripper_option=()
   [[ "${data_mode}" == "gripper" ]] && gripper_option=(--gripper)
+  [[ "${hand_arm}" == false ]] || gripper_option=(--hand-arm)
   exec bash "${script_dir}/start_quest3_hardware.sh" --left "${gripper_option[@]}" "${quest_action}"
 fi
 [[ -z "${quest_action}" ]] || { echo "hardware action flags require --teleop-source quest" >&2; exit 2; }

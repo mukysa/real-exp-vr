@@ -33,7 +33,7 @@ env -u WAYLAND_DISPLAY DISPLAY=:0 ./tools/alvr-v20.14.1/bin/alvr_dashboard
 env -u WAYLAND_DISPLAY DISPLAY=:0 /home/landau/.local/share/Steam/steam.sh -applaunch 250820
 ```
 
-戴上 Quest，打开 ALVR 20.14.1，通过 WiFi 连接电脑，保持 `Streaming`，握住并抬起两只实体 Touch 手柄，使两只手柄都处于头显可追踪范围内；即使只控制左臂也需要如此。仅显示 `Streaming` 不代表手柄追踪有效，未抬起两只手柄时可能出现 `0/30 valid OpenVR poses`。关闭 Quest 系统菜单，使 ALVR 保持前台。三种模式都会先检查并持续读取双手柄；实体左手柄 Y 是唯一接管／回位键。
+戴上 Quest，打开 ALVR 20.14.1，通过 WiFi 连接电脑，保持 `Streaming`，握住并抬起两只实体 Touch 手柄，使两只手柄都处于头显可追踪范围内；即使只控制左臂也需要如此。仅显示 `Streaming` 不代表手柄追踪有效，未抬起两只手柄时可能出现 `0/30 valid OpenVR poses`。关闭 Quest 系统菜单，使 ALVR 保持前台。默认三种模式都会先检查并持续读取双手柄；实体左手柄 Y 是接管／回位键。显式启用 `--hand-arm` 时改为右 B，见第 5.5 节。
 
 ### 2.1 按键前置验证
 
@@ -244,6 +244,68 @@ scp -rp pair1@192.168.52.160:/home/pair1/real-exp-vr/lerobot_data/quest_left_tes
 ```
 
 复制后的数据集位于 `~/real-exp-vr/lerobot_data/quest_left_gripper`。确认其 `meta/real_exp_trajectory_config.json` 中为 `"end_effector":"gripper"`、`"include_gripper":true` 后再回放。
+
+### 5.5 左手套位姿预演：`--hand-arm`
+
+该模式用于接入 Wuji 手前的左臂测试。左 Touch 可绑在手套上，只提供位姿；右 Touch 的位姿不参与机械臂目标计算。client 和 server 两端都增加 `--hand-arm`，限定 `--teleop-source quest --left`，自动选择 arm-only；与 `--gripper`、`--hand`、右臂、双臂组合会直接报错。当前不启动 Wuji 手或 Franka gripper。省略此参数继续走原有流程。
+
+| 输入 | 行为 |
+|---|---|
+| 左 Touch 位姿 | 驱动左臂，保留现有坐标映射与实测接管锚定 |
+| 左 Touch 所有按键/扳机 | 忽略 |
+| 右 B 短按 | 接管；再次短按返回本轮接管点 |
+| 右 A 短按 | 录制器空闲时开始；录制中结束并保存 |
+| 右食指扳机 | 放弃当前未保存 episode，不删除历史 |
+| server 录制器键盘 s/e/d/q + Enter | 保留；q 有未保存帧时按原流程保存后退出 |
+
+先在 client 构建并做不连接机器人的入口检查：
+
+```bash
+cd /home/landau/real-exp-vr
+bash scripts/build_quest3_ros2.sh
+bash scripts/start_data_collection_client.sh \
+  --teleop-source quest --left --hand-arm --check-only
+```
+
+现场测试时，用下面命令替换原 client 遥操入口：
+
+```bash
+bash scripts/start_data_collection_client.sh \
+  --teleop-source quest --left --hand-arm --enable-hardware
+```
+
+server 同步本次代码，在仓库根目录启动采集和录制控制 relay：
+
+```bash
+bash scripts/start_data_collection_server.sh \
+  --teleop-source quest --left --hand-arm --ros-domain-id 0
+```
+
+在 server 的另一个终端启动交互式录制器（推荐先用这一方式验收键盘兜底）：
+
+```bash
+conda activate lerobot-vr
+python data_collection/lerobot_collection.py \
+  --host 127.0.0.1 --port 5555 --hand-arm \
+  --repo-id local/franka_quest_left_hand_arm_teleop \
+  --local-dir ./lerobot_data/quest_left_hand_arm_test1
+```
+
+也可给 server 启动命令增加 `--record --local-dir ./lerobot_data/quest_left_hand_arm_test1` 自动启动录制器，此时 server 启动终端保留键盘输入，q 退出录制器后 supervisor 会结束 server 栈。手动和自动方式只选一个录制器。控制端口默认为 server 本机 `5559`，若修改，server 与手动录制器均传 `--record-control-port PORT`。数采样本仍走原有 `5555`；跨机录制指令和回执走既有有线 DDS。
+
+先松开右侧 B/A/扳机，待录制器可用后按 **B 接管 → 确认 FOLLOWING → A 开录 → 移动左 Touch → A 保存 → 等待保存完成 → B 回位**。弃用一条时，把保存步骤换成右食指扳机。每次按键只处理按下沿，长按不重复；触发器默认达到 0.75 触发，低于 0.25 后重新使能。ROS launch 提供 `trigger_press`/`trigger_release` 参数供后续调试。
+
+client 的 `LEFT_SOURCE_STATUS` 包含 `button: physical right B`、`right_control_fresh` 和 `recorder` 状态；详细回执同时写入启动时输出的日志目录中的 `quest_control.log`。两端 ROS 终端也可只读查看回执：
+
+```bash
+ros2 topic echo /left/vr/record_status std_msgs/msg/String
+```
+
+开始录制要求新鲜采集样本、左臂 FOLLOWING 和有效右控制输入；开始被拒后，下一次 A 仍尝试开始。结束/丢弃不要求相机新帧或左臂继续跟随。保存中忽略操作；保存失败会报告 error，停止继续加帧，先在录制器终端检查错误，再用 e 重试或 d 放弃。无有效帧时不保存空 episode。
+
+启动时已按住的键、重连后已按住的键均须先释放；过期、重复和旧录制状态的事件会被拒绝，不在恢复时重放。两台机器需通过 NTP/chrony 同步系统时钟，远程事件有效期为 1 秒。右输入超时或控制栈故障后需重启 client 栈，恢复数据不会自动接管。B 不自动结束录制；先保存/丢弃，再回位。退出录制器后，在 client 启动终端按 Ctrl+C 停止臂控制。
+
+本次完成离线与本机传输验证；真实双机 DDS、相机、手柄和左臂的组合验收仍待现场进行。
 
 ## 6. LeRobot 数据回放
 

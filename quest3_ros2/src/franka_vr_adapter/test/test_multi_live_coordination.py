@@ -40,7 +40,7 @@ def rig():
     base = time.monotonic() - 0.5
     outputs = []
     harness = SimpleNamespace(
-        mode="duo", cores=cores, input_timeout_s=2.0,
+        mode="duo", cores=cores, input_timeout_s=2.0, left_gripper_enabled=False,
         y_blocked_until_release=False,
         _adapter_lock=Lock(), adapter_faults={},
         input=PairedQuestInput("duo"), subscription=Subscription(),

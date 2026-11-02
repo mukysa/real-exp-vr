@@ -29,6 +29,9 @@ Required:
 
 Options:
   --teleop-source SOURCE Input source: gello (default) or quest (left arm).
+  --hand-arm            Quest left arm-only test; right B/A/trigger controls.
+  --record-control-port PORT
+                        Local recorder control port (default: 5559).
   --record              Start the LeRobot recorder on this server.
   --local-dir PATH      Dataset directory for --record (default: ./lerobot_data).
   --repo-id ID          LeRobot repo id for --record.
@@ -51,6 +54,8 @@ die() { echo "Error: $*" >&2; exit 1; }
 arm_mode=""
 gripper_mode=""
 record=0
+hand_arm=false
+record_control_port=5559
 local_dir="./lerobot_data"
 repo_id=""
 teleop_source="gello"
@@ -78,6 +83,10 @@ while [[ "$#" -gt 0 ]]; do
     --teleop-source)
       [[ "$#" -ge 2 ]] || die "--teleop-source requires gello or quest"
       teleop_source="$2"; shift 2 ;;
+    --hand-arm) hand_arm=true; shift ;;
+    --record-control-port)
+      [[ "$#" -ge 2 ]] || die "--record-control-port requires a port"
+      record_control_port="$2"; shift 2 ;;
     --record) record=1; shift ;;
     --local-dir)
       [[ "$#" -ge 2 ]] || die "--local-dir requires a path"
@@ -105,6 +114,13 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
+if [[ "${hand_arm}" == true ]]; then
+  [[ -n "${gripper_mode}" ]] || gripper_mode=arm
+  [[ "${teleop_source}" == quest && "${arm_mode}" == left && "${gripper_mode}" == arm ]] || die "--hand-arm requires --teleop-source quest --left and arm-only mode"
+  [[ "${record_control_port}" =~ ^[0-9]+$ && "${#record_control_port}" -le 5 ]] || die "invalid record control port"
+  ((10#${record_control_port} >= 1 && 10#${record_control_port} <= 65535)) || die "invalid record control port"
+  [[ "${record_control_port}" != "${bridge_port}" ]] || die "control and sample ports must differ"
+fi
 [[ -n "${arm_mode}" && -n "${gripper_mode}" ]] || { usage >&2; exit 2; }
 
 case "${teleop_source}" in
@@ -117,6 +133,7 @@ if [[ "${teleop_source}" == "quest" ]]; then
   if [[ "${gripper_mode}" == "gripper" ]]; then
     quest_task_name="franka_quest_left_gripper_teleop"
   fi
+  [[ "${hand_arm}" == false ]] || quest_task_name="franka_quest_left_hand_arm_teleop"
   repo_id="${repo_id:-local/${quest_task_name}}"
   [[ "${bridge_host_explicit}" -eq 1 ]] || bridge_host="127.0.0.1"
 else
@@ -242,7 +259,13 @@ active_probe_pid=""
 start_process() {
   local process_name="$1"; shift
   echo "Starting ${process_name}: $*"
-  setsid -- bash -c 'trap - INT QUIT; exec "$@"' _ "$@" &
+  if [[ "${hand_arm}" == true && "${process_name}" == "LeRobot recorder" ]]; then
+    # An explicit stdin redirect preserves keyboard s/e/d/q for the optional
+    # recorder; ordinary asynchronous children otherwise receive /dev/null.
+    setsid -- bash -c 'trap - INT QUIT; exec "$@"' _ "$@" <&0 &
+  else
+    setsid -- bash -c 'trap - INT QUIT; exec "$@"' _ "$@" &
+  fi
   local child_pid=$!
   child_pids+=("${child_pid}")
   child_names["${child_pid}"]="${process_name}"
@@ -307,6 +330,14 @@ trap 'exit 143' TERM
 
 echo "Data-server mode: ${arm_mode}; teleop source: ${teleop_source}; ROS: ${ros_distro}; bridge: tcp://${bridge_host}:${bridge_port}"
 
+record_options=()
+if [[ "${hand_arm}" == true ]]; then
+  record_options=(--hand-arm --record-control-port "${record_control_port}")
+  start_process "Quest recording control relay" \
+    env "PYTHONPATH=${repository_root}${PYTHONPATH:+:${PYTHONPATH}}" \
+    "${ros_python}" -m data_collection.quest_record_relay \
+    --ros-args -p "control_port:=${record_control_port}"
+fi
 camera_launch_args=()
 if [[ "${teleop_source}" == "quest" ]]; then
   camera_config="${repository_root}/config/data_collection/quest_left_camera.yaml"
@@ -411,17 +442,24 @@ if [[ "${teleop_source}" == "quest" ]]; then
     fi
     echo "Ready: ${topic} is publishing on the data server"
   done
-  echo "Quest left observation path ready before Y; zero-action bridge samples are streaming. Press left Y on the client for accepted teleop targets."
+  if [[ "${hand_arm}" == true ]]; then
+    echo "Quest left observation path ready before B; zero-action samples are streaming. Right B takes over the left arm; A starts/saves only after recorder confirmation."
+  else
+    echo "Quest left observation path ready before Y; zero-action bridge samples are streaming. Press left Y on the client for accepted teleop targets."
+  fi
 fi
 
 if [[ "${record}" -eq 1 ]]; then
   start_process "LeRobot recorder" \
     "${recorder_python[@]}" "${repository_root}/data_collection/lerobot_collection.py" \
     --host "${bridge_host}" --port "${bridge_port}" \
-    --repo-id "${repo_id}" --local-dir "${local_dir}"
+    --repo-id "${repo_id}" --local-dir "${local_dir}" "${record_options[@]}"
 else
   if [[ "${teleop_source}" == "quest" ]]; then
     echo "Recorder not started. After bridge samples begin, run the interactive recorder in another server terminal."
+    if [[ "${hand_arm}" == true ]]; then
+      echo "Add --hand-arm --record-control-port ${record_control_port} to that recorder command."
+    fi
   else
     echo "Recorder not started. Restart this launcher with --record to launch it automatically."
   fi

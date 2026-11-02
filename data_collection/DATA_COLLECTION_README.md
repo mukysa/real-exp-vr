@@ -23,6 +23,26 @@ Environment split for the current client/server GELLO collection setup:
 - On the data server, use the `lerobot-vr` Conda environment for the LeRobot recorder, dataset processing, and validation. Its LeRobot editable install should resolve to `~/real-exp-vr/lerobot`. Training dependencies have not been validated as part of this collection setup.
 
 
+## Quest left hand-arm test mode
+
+Before connecting the Wuji hand, use `--teleop-source quest --left --hand-arm`
+on both collection launchers. This selects left arm-only operation: left Touch
+provides pose, right B takes over/returns, right A starts/saves the current
+episode, and the right index trigger discards its unsaved buffer. Keyboard
+`s/e/d/q` remains available in the recorder. No hand or gripper driver starts;
+`--hand-arm` rejects `--gripper`, `--hand`, right-arm and dual-arm combinations.
+Omitting this flag preserves the existing GELLO and Quest profiles.
+
+See section 5.5 of [Quest quick start](../README-QUICKSTART.md) for client/server
+commands, manual and automatic recorder startup, acknowledgements and the
+remaining hardware acceptance steps. The server launches a camera-independent
+`quest_record_relay` using system ROS Python; the Conda recorder uses
+`--hand-arm` and a local JSON socket (default `127.0.0.1:5559`). Remote start
+requires FOLLOWING and fresh samples; save/discard works without new camera
+frames or new left poses. Synchronize client/server wall clocks for the one
+second command deadline. This mode currently has offline and localhost
+transport coverage; live hardware acceptance remains pending.
+
 ## Before launching
 
 Install the GELLO USB aliases once on the robot-control host:

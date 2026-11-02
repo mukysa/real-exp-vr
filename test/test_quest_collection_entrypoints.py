@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("action", ["--check-only", "--enable-hardware"])
-@pytest.mark.parametrize("data_mode", ["--arm", "--gripper"])
+@pytest.mark.parametrize("data_mode", ["--arm", "--gripper", "--hand-arm"])
 def test_quest_client_routes_without_gello_build(tmp_path, action, data_mode):
     shutil.copy(ROOT / "scripts/start_data_collection_client.sh", tmp_path)
     config_dir = tmp_path.parent / "config" / "data_collection"
@@ -24,8 +24,38 @@ def test_quest_client_routes_without_gello_build(tmp_path, action, data_mode):
     )
     assert result.returncode == 0, result.stderr
     assert "Quest collection DDS: wired client to server" in result.stdout
-    expected = ["--left"] + (["--gripper"] if data_mode == "--gripper" else []) + [action]
+    expected = ["--left"] + ([data_mode] if data_mode in {"--gripper", "--hand-arm"} else []) + [action]
     assert result.stdout.splitlines()[-len(expected):] == expected
+
+
+@pytest.mark.parametrize("launcher", ["client", "server"])
+@pytest.mark.parametrize("modes", [
+    ["--teleop-source", "quest", "--left", "--gripper"],
+    ["--teleop-source", "quest", "--left", "--hand"],
+    ["--teleop-source", "quest", "--right"],
+    ["--teleop-source", "quest", "--duo"],
+    ["--left"],
+])
+def test_hand_arm_rejects_incompatible_modes_before_setup(launcher, modes):
+    result = subprocess.run(
+        ["bash", str(ROOT / f"scripts/start_data_collection_{launcher}.sh"),
+         "--hand-arm", *modes], capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert "--hand-arm requires" in result.stderr
+
+
+def test_hand_arm_automatic_recorder_preserves_keyboard_stdin():
+    source = (ROOT / "scripts/start_data_collection_server.sh").read_text()
+    function = source[source.index("start_process() {"):source.index("signal_running_groups() {")]
+    result = subprocess.run(
+        ["bash", "-c", 'set -eu\nhand_arm=true\ndeclare -a child_pids=()\n'
+         'declare -A child_names=()\n' + function +
+         '\nstart_process "LeRobot recorder" bash -c \'read -r command; test "$command" = q\'\n'
+         'wait "${child_pids[0]}"\n'],
+        input="q\n", capture_output=True, text=True, timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("launcher", ["client", "server"])
