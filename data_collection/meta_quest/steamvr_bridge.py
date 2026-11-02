@@ -218,15 +218,15 @@ def run_bridge(args: argparse.Namespace) -> None:
         frame_id = 0
         sent = 0
         last_ids: tuple[int, ...] = ()
+        last_left_y: bool | None = None
         report_start = time.monotonic()
         try:
             while True:
-                # update_render() implicitly refreshes the HMD/controller
-                # poses and inputs in the SAPIEN build installed on the rig.
-                # Do not call render(): this adapter has no simulation image
-                # to submit and SteamVR rejects an empty frame submission.
+                # The installed SAPIEN build refreshes legacy controller input
+                # on the complete update/render path used by the old bridge.
                 scene.update_render()
                 display.update_render()
+                display.render()
                 frame_id += 1
                 ids = tuple(int(value) for value in display.get_controller_ids())
                 if ids != last_ids:
@@ -243,6 +243,14 @@ def run_bridge(args: argparse.Namespace) -> None:
                     source_pose = display.get_controller_pose(controller_id)
                     pose = sapien_pose_to_unity(source_pose.p, source_pose.q)
                     mask = int(display.get_controller_button_pressed(controller_id))
+                    if side == "left":
+                        left_y = bool(mask & BUTTON_B)
+                        if left_y != last_left_y:
+                            print(
+                                f"Left Y clutch={'pressed' if left_y else 'released'}",
+                                flush=True,
+                            )
+                            last_left_y = left_y
                     line = compact_controller_line(
                         side=side,
                         pose=pose,

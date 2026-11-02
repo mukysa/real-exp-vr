@@ -292,8 +292,8 @@ fi
 
 echo "Hardware chain ready: ${mode}. Left Y takes over selected arm(s); second Y returns."
 echo "Press Ctrl+C at any time to stop. Logs: ${log_dir}"
-start_process openvr bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" \
-  --global-left-y --host 127.0.0.1 --port 8001
+start_process openvr bash "${repository_root}/scripts/start_meta_quest_steamvr_bridge.sh" \
+  --side both --host 127.0.0.1 --port 8001
 bridge_pid="${children[${#children[@]}-1]}"
 declare -A last_source_status last_adapter_status
 while kill -0 "${bridge_pid}" 2>/dev/null; do

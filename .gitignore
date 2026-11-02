@@ -221,3 +221,7 @@ recordings/quest_raw/
 grasp/assets/checkpoints
 calibration/runs
 grasp/runs
+
+/tools/alvr-*/bin/alvr_dashboard
+
+/tools/alvr-*/bin/alvr_dashboard

@@ -1,0 +1,15 @@
+{
+  "backup_time": "2026-10-20T13:39:04.164198+08:00",
+  "package": "alvr.client",
+  "versionName": "20.8.1",
+  "versionCode": 18089985,
+  "device_serial": "2G97C5ZJ0Z01R1",
+  "device_model": "Quest 3",
+  "source_apk": "/data/app/~~aWBnZSekMcN_XxOLTNUQew==/alvr.client-3FqhdSEC_b1Jiez826nPmg==/base.apk",
+  "file": "alvr_client_v20.8.1_quest3.apk",
+  "size_bytes": 16565085,
+  "sha256": "51299844af4be0a15bfbeaa7942885711da39569f90fa3e17aa412cfbef41d99",
+  "device_sha256_matched": true,
+  "zip_crc_verified": true,
+  "scope": "Installed base APK only; application private data and PC configuration are not included. No install, uninstall, force-stop, launch or settings changes performed."
+}
