@@ -13,6 +13,7 @@ publisher, robot backend, or robot output.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from pathlib import Path
 import socket
@@ -23,6 +24,7 @@ from typing import Any, Sequence
 from .calibration import RigidPose
 from .coordinates import change_rotation_basis, transform_vector
 from .power import QuestKeepAwake
+from .tracking_reference import POSE_REFERENCES, TrackingStartReference, pose_dict
 from .steamvr_bridge import (
     BUTTON_A,
     BUTTON_B,
@@ -108,23 +110,27 @@ def _rotation_matrix_to_quaternion(
     return RigidPose((0.0, 0.0, 0.0), result).quaternion_xyzw
 
 
-def openvr_matrix_to_unity_pose(matrix: Sequence[Sequence[float]]) -> RigidPose:
-    """Convert an OpenVR 3x4 tracking matrix to the raw Unity-like contract."""
-
+def openvr_matrix_to_pose(matrix: Sequence[Sequence[float]]) -> RigidPose:
+    """Read a finite tracking matrix in the original OpenVR standing axes."""
     rows = tuple(tuple(float(value) for value in row) for row in matrix)
     if len(rows) != 3 or any(len(row) != 4 for row in rows):
         raise ValueError("OpenVR pose must be a 3x4 matrix")
     if not all(math.isfinite(value) for row in rows for value in row):
         raise ValueError("OpenVR pose must contain finite values")
-    position = transform_vector(
-        (rows[0][3], rows[1][3], rows[2][3]),
-        OPENVR_TO_UNITY_BASIS,
-    )
     quaternion = _rotation_matrix_to_quaternion(tuple(row[:3] for row in rows))
+    return RigidPose(tuple(row[3] for row in rows), quaternion)
+
+
+def _openvr_pose_to_unity(pose: RigidPose) -> RigidPose:
     return RigidPose(
-        position,
-        change_rotation_basis(quaternion, OPENVR_TO_UNITY_BASIS),
+        transform_vector(pose.position, OPENVR_TO_UNITY_BASIS),
+        change_rotation_basis(pose.quaternion_xyzw, OPENVR_TO_UNITY_BASIS),
     )
+
+
+def openvr_matrix_to_unity_pose(matrix: Sequence[Sequence[float]]) -> RigidPose:
+    """Convert an OpenVR 3x4 tracking matrix to the Unity-like contract."""
+    return _openvr_pose_to_unity(openvr_matrix_to_pose(matrix))
 
 
 def _load_openvr() -> Any:
@@ -142,7 +148,7 @@ def _load_openvr() -> Any:
 def _controller_controls(system: Any, controller_id: int, *, single_left: bool = False) -> tuple[float, bool, bool]:
     ok, state = system.getControllerState(controller_id)
     if not ok:
-        return 0.0, False, False
+        raise RuntimeError("OpenVR controller state unavailable; refusing neutral button fallback")
     mask = int(state.ulButtonPressed)
     try:
         trigger = float(state.rAxis[1].x)
@@ -181,6 +187,82 @@ def _physical_controller_id(system: Any, openvr: Any, side: str) -> int:
         if device_id != role_id and matches(device_id):
             return device_id
     return openvr.k_unTrackedDeviceIndexInvalid
+
+
+def _quest_headset_id(system: Any, openvr: Any, serial: str | None = None) -> int:
+    """Find the physical Quest even when index zero is SteamVR's null HMD."""
+    serials = {serial} if serial else set()
+    if not serial:
+        for side in ("left", "right"):
+            controller_id = _physical_controller_id(system, openvr, side)
+            if controller_id != openvr.k_unTrackedDeviceIndexInvalid:
+                value = system.getStringTrackedDeviceProperty(
+                    controller_id, openvr.Prop_SerialNumber_String)
+                serials.add(value.removesuffix(f"_Controller_{side.title()}"))
+    matches = []
+    for device_id in range(openvr.k_unMaxTrackedDeviceCount):
+        try:
+            device_serial = system.getStringTrackedDeviceProperty(
+                device_id, openvr.Prop_SerialNumber_String)
+            # An explicit serial override must not select SteamVR's null HMD.
+            if device_serial == "Null Serial Number":
+                continue
+            if (system.getTrackedDeviceClass(device_id) in
+                    (openvr.TrackedDeviceClass_HMD, openvr.TrackedDeviceClass_TrackingReference)
+                    and device_serial in serials):
+                matches.append(device_id)
+        except Exception:
+            continue
+    return matches[0] if len(matches) == 1 else openvr.k_unTrackedDeviceIndexInvalid
+
+
+def _tracked_pose(poses: Any, device_id: int, openvr: Any) -> RigidPose | None:
+    if device_id == openvr.k_unTrackedDeviceIndexInvalid:
+        return None
+    tracked = poses[device_id]
+    if not tracked.bDeviceIsConnected or not tracked.bPoseIsValid:
+        return None
+    try:
+        return openvr_matrix_to_pose(tracked.mDeviceToAbsoluteTracking.m)
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def _reference_reset_event(system: Any, openvr: Any) -> int | None:
+    """Drain notifications without accessing VRCompositor."""
+    resets = {openvr.VREvent_StandingZeroPoseReset,
+              openvr.VREvent_ChaperoneUniverseHasChanged,
+              openvr.VREvent_ChaperoneRoomSetupCommitted}
+    event = openvr.VREvent_t()
+    while system.pollNextEvent(event):
+        if int(event.eventType) in resets:
+            return int(event.eventType)
+    return None
+
+
+def _write_reference(path: str | None, reference: TrackingStartReference,
+                     system: Any, openvr: Any, headset_id: int) -> None:
+    assert reference.headset_start is not None
+    metadata = {
+        "pose_reference": reference.mode,
+        "tracking_universe": "OpenVR Standing",
+        "source_axes": "right-handed: x right, y up, -z forward",
+        "output_axes": "Unity-like: x right, y up, +z forward",
+        "captured_monotonic_ns": reference.captured_monotonic_ns,
+        "headset_id": headset_id,
+        "headset_serial": system.getStringTrackedDeviceProperty(
+            headset_id, openvr.Prop_SerialNumber_String),
+        "standing_from_headset_start": pose_dict(reference.headset_start),
+        "reference_from_standing": pose_dict(reference.reference_from_standing),
+        "frozen_until_process_exit": True,
+    }
+    print("HEADSET_START_REFERENCE " + json.dumps(metadata, sort_keys=True), flush=True)
+    if path:
+        target = Path(path).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("x", encoding="utf-8") as output:
+            json.dump(metadata, output, indent=2, sort_keys=True)
+            output.write("\n")
 
 
 class _AsyncKeepAwake:
@@ -239,12 +321,13 @@ def run_bridge(args: argparse.Namespace) -> None:
                 raise SystemExit("ALVR is not Streaming; physical Touch check failed.")
             print("Waiting for ALVR Streaming before Touch check...", flush=True)
             time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
-        openvr.init(openvr.VRApplication_Background)
+        system = openvr.init(openvr.VRApplication_Background)
         try:
-            system = openvr.VRSystem()
             sides = ("left", "right") if args.check_both_touch else ("left",)
+            reference = TrackingStartReference(args.pose_reference, stable_s=args.reference_stable_s)
             while True:
                 valid = {side: 0 for side in sides}
+                headset_valid = 0
                 controller_ids = {side: openvr.k_unTrackedDeviceIndexInvalid for side in sides}
                 for _ in range(30):
                     poses = system.getDeviceToAbsoluteTrackingPose(
@@ -252,23 +335,39 @@ def run_bridge(args: argparse.Namespace) -> None:
                         0.0,
                         openvr.k_unMaxTrackedDeviceCount,
                     )
+                    if args.pose_reference != "standing":
+                        headset_id = _quest_headset_id(system, openvr, args.headset_serial)
+                        head_pose = _tracked_pose(poses, headset_id, openvr)
+                        headset_valid += int(head_pose is not None)
+                        reference.observe(head_pose, time.monotonic_ns())
                     for side in sides:
                         controller_id = _physical_controller_id(system, openvr, side)
                         controller_ids[side] = controller_id
                         if controller_id != openvr.k_unTrackedDeviceIndexInvalid:
                             tracked = poses[controller_id]
-                            valid[side] += int(tracked.bDeviceIsConnected and tracked.bPoseIsValid)
+                            if tracked.bDeviceIsConnected and tracked.bPoseIsValid:
+                                try:
+                                    _controller_controls(system, controller_id)
+                                except RuntimeError:
+                                    continue
+                                valid[side] += int(bool(system.isInputAvailable()))
                     time.sleep(0.1)
                 for side in sides:
                     print(
-                        f"Physical {side} Touch: {valid[side]}/30 valid OpenVR poses; "
+                        f"Physical {side} Touch: {valid[side]}/30 valid poses and button reads; "
                         f"id={controller_ids[side]}",
                         flush=True,
                     )
-                if all(valid[side] == 30 for side in sides):
+                if args.pose_reference != "standing":
+                    print(f"Physical Quest headset: {headset_valid}/30 valid poses; "
+                          f"stable_start_reference={reference.ready}", flush=True)
+                if (all(valid[side] == 30 for side in sides) and reference.ready
+                        and (args.pose_reference == "standing" or headset_valid == 30)):
+                    if args.pose_reference != "standing":
+                        _write_reference(args.reference_file, reference, system, openvr, headset_id)
                     break
                 if time.monotonic() >= deadline:
-                    raise SystemExit("Physical Touch tracking is not ready after waiting.")
+                    raise SystemExit("Physical Touch input/headset reference not ready after waiting.")
                 waiting_for = " and ".join(sides)
                 print(
                     f"Waiting for physical {waiting_for} Touch tracking to reach 30/30...",
@@ -285,9 +384,13 @@ def run_bridge(args: argparse.Namespace) -> None:
         if not args.no_alvr_wait:
             _wait_for_alvr(session_path, power)
 
-        openvr.init(openvr.VRApplication_Background)
+        system = openvr.init(openvr.VRApplication_Background)
         openvr_initialized = True
-        system = openvr.VRSystem()
+        reference = TrackingStartReference(args.pose_reference, stable_s=args.reference_stable_s)
+        reference_deadline = time.monotonic() + args.reference_wait_s
+        reference_headset_id = None
+        reference_headset_serial = None
+        last_reference_report = float("-inf")
         selected = ("left", "right") if args.side == "both" else (args.side,)
         print(
             f"Connecting direct OpenVR input to PoseReceiver at {args.host}:{args.port}; "
@@ -310,6 +413,11 @@ def run_bridge(args: argparse.Namespace) -> None:
                         flush=True,
                     )
                     return
+                reset_event = _reference_reset_event(system, openvr)
+                if reset_event is not None and frame_id:
+                    raise RuntimeError(
+                        f"OpenVR tracking origin changed (event {reset_event}); "
+                        "restart and capture a new headset reference before control")
                 poses = system.getDeviceToAbsoluteTrackingPose(
                     openvr.TrackingUniverseStanding,
                     0.0,
@@ -317,6 +425,34 @@ def run_bridge(args: argparse.Namespace) -> None:
                 )
                 frame_id += 1
                 timestamp_ns = time.monotonic_ns()
+                if args.pose_reference != "standing":
+                    if reference.ready:
+                        headset_id = reference_headset_id
+                        if system.getStringTrackedDeviceProperty(
+                                headset_id, openvr.Prop_SerialNumber_String) != reference_headset_serial:
+                            raise RuntimeError("Physical Quest headset identity changed; restart reference capture")
+                    else:
+                        headset_id = _quest_headset_id(system, openvr, args.headset_serial)
+                    head_pose = _tracked_pose(poses, headset_id, openvr)
+                    if reference.observe(head_pose, timestamp_ns):
+                        reference_headset_id = headset_id
+                        reference_headset_serial = system.getStringTrackedDeviceProperty(
+                            headset_id, openvr.Prop_SerialNumber_String)
+                        _write_reference(args.reference_file, reference, system, openvr, headset_id)
+                    if not reference.ready:
+                        if time.monotonic() >= reference_deadline:
+                            raise RuntimeError("No stable physical Quest headset startup pose; no input sent")
+                        if time.monotonic() - last_reference_report >= 5.0:
+                            print("Waiting for stable physical Quest headset pose; hold head still. "
+                                  "Null HMD is never used as the reference.", flush=True)
+                            last_reference_report = time.monotonic()
+                        time.sleep(1.0 / args.poll_hz)
+                        next_poll = time.monotonic()
+                        continue
+                    if head_pose is None:
+                        raise RuntimeError("Physical Quest headset tracking lost; frozen reference retained, stream stopped")
+                if not system.isInputAvailable():
+                    raise RuntimeError("OpenVR input unavailable; dismiss dashboard and verify bindings")
                 current_ids: dict[str, int] = {}
                 for side in selected:
                     controller_id = _physical_controller_id(system, openvr, side)
@@ -326,7 +462,8 @@ def run_bridge(args: argparse.Namespace) -> None:
                     tracked = poses[controller_id]
                     if not tracked.bDeviceIsConnected or not tracked.bPoseIsValid:
                         continue
-                    pose = openvr_matrix_to_unity_pose(tracked.mDeviceToAbsoluteTracking.m)
+                    pose = _openvr_pose_to_unity(reference.apply(
+                        openvr_matrix_to_pose(tracked.mDeviceToAbsoluteTracking.m)))
                     if args.single_left and side != "left":
                         continue
                     left_y_button = args.single_left or (args.global_left_y and side == "left")
@@ -386,6 +523,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--alvr-session", default="~/.config/alvr/session.json")
     parser.add_argument("--no-alvr-wait", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--pose-reference", choices=POSE_REFERENCES, default="standing",
+                        help="standing: unchanged; headset-start-position: frozen origin, standing axes; "
+                             "headset-start: frozen full pose (requires axis calibration)")
+    parser.add_argument("--headset-serial", help="physical ALVR headset serial; otherwise derive from Touch serials")
+    parser.add_argument("--reference-file", help="write new startup-reference JSON; refuse overwriting an existing file")
+    parser.add_argument("--reference-wait-s", type=float, default=30.0)
+    parser.add_argument("--reference-stable-s", type=float, default=0.5)
     parser.add_argument("--check-left-touch", action="store_true")
     parser.add_argument("--check-both-touch", action="store_true")
     parser.add_argument(
@@ -401,12 +545,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.side = "both"
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
-    if args.poll_hz <= 0.0:
+    if not math.isfinite(args.poll_hz) or args.poll_hz <= 0.0:
         parser.error("--poll-hz must be positive")
-    if args.report_interval_s <= 0.0:
+    if not math.isfinite(args.report_interval_s) or args.report_interval_s <= 0.0:
         parser.error("--report-interval-s must be positive")
     if not 0.0 <= args.touch_wait_s <= 300.0:
         parser.error("--touch-wait-s must be between 0 and 300")
+    if not math.isfinite(args.reference_wait_s) or args.reference_wait_s <= 0.0:
+        parser.error("--reference-wait-s must be finite and positive")
+    if not math.isfinite(args.reference_stable_s) or not 0.0 <= args.reference_stable_s < args.reference_wait_s:
+        parser.error("--reference-stable-s must be finite, nonnegative and less than reference wait")
+    if args.reference_file and args.pose_reference == "standing":
+        parser.error("--reference-file requires a headset-start reference mode")
     return args
 
 

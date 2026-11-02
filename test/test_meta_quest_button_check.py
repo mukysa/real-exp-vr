@@ -5,12 +5,13 @@ from types import SimpleNamespace
 from data_collection.meta_quest import button_check
 
 
-def _monitor(monkeypatch, *, slow_render=False, axis_error=False, invalid_pose=False):
+def _monitor(monkeypatch, *, slow_render=False, axis_error=False, invalid_pose=False,
+             debug=None, button_masks=None):
     clock = SimpleNamespace(now=0.0)
     calls = []
     monkeypatch.setattr(button_check.time, "monotonic", lambda: clock.now)
     monkeypatch.setattr(button_check.time, "sleep", lambda seconds: setattr(clock, "now", clock.now + seconds))
-    diagnostics = button_check._Diagnostics(0.25, 2.0)
+    diagnostics = button_check._Diagnostics(0.25, 2.0, debug)
     frame = 0
 
     def scene_update():
@@ -31,6 +32,8 @@ def _monitor(monkeypatch, *, slow_render=False, axis_error=False, invalid_pose=F
 
     def buttons(controller):
         calls.append(f"buttons{controller}")
+        if button_masks is not None:
+            return button_masks[min(frame - 1, len(button_masks) - 1)]
         return button_check.BUTTON_TRIGGER if axis_error else 0
 
     def axis(controller, index):
@@ -57,7 +60,7 @@ def _monitor(monkeypatch, *, slow_render=False, axis_error=False, invalid_pose=F
     )
     monkeypatch.setattr(button_check, "_load_sapien", lambda: sapien)
     monkeypatch.setattr(button_check, "_configure_sapien_vr", lambda _: False)
-    button_check._monitor(5.1, 10.0, 2.0, invalid_pose, diagnostics)
+    button_check._monitor(5.1, 10.0, 2.0, invalid_pose, diagnostics, backend="sapien")
     return calls
 
 
@@ -99,3 +102,23 @@ def test_optional_pose_probe_exposes_nonfinite_values(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "left: signal=DEGRADED" in output
     assert "pose=ERROR(ValueError: pose must contain seven finite values)" in output
+
+
+def test_short_press_and_release_edges_are_recorded_between_summaries(tmp_path, monkeypatch):
+    import json
+
+    from data_collection.meta_quest.debug_recording import DebugChannel, _Recorder
+
+    recorder = _Recorder("button_test", run_dir=tmp_path, observer=False)
+    debug = DebugChannel("button_check", recorder)
+    masks = [0, button_check.BUTTON_B, 0, button_check.BUTTON_B, 0]
+    try:
+        _monitor(monkeypatch, debug=debug, button_masks=masks)
+    finally:
+        recorder.close()
+        recorder._thread.join(timeout=3)
+    assert not recorder._thread.is_alive()
+    records = [json.loads(line) for line in (recorder.output_dir / "events.jsonl").read_text().splitlines()]
+    left_edges = [r["fields"]["mask"] for r in records
+                  if r.get("event") == "button_state_changed" and r["fields"]["side"] == "left"]
+    assert left_edges == masks

@@ -1,4 +1,4 @@
-"""Read-only SAPIEN/SteamVR Touch button monitor."""
+"""Read-only Touch button monitor; OpenVR input is the default backend."""
 
 from __future__ import annotations
 
@@ -6,10 +6,12 @@ import argparse
 from collections import defaultdict
 import math
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any, Callable
 
+from .debug_recording import DebugChannel, get_debug_recorder
 from .steamvr_bridge import (
     BUTTON_A, BUTTON_B, BUTTON_GRIP, BUTTON_TRIGGER, CONTROLLERS,
     _configure_sapien_vr, _load_sapien, alvr_is_streaming,
@@ -19,7 +21,8 @@ from .steamvr_bridge import (
 class _Diagnostics:
     """Time the existing calls; the watcher never calls a VR API."""
 
-    def __init__(self, stall_s: float, input_gap_s: float) -> None:
+    def __init__(self, stall_s: float, input_gap_s: float, debug: DebugChannel | None = None) -> None:
+        self.debug = debug
         self.stall_s = stall_s
         self.input_gap_s = input_gap_s
         self.started = time.monotonic()
@@ -37,6 +40,9 @@ class _Diagnostics:
         self._thread = threading.Thread(target=self._watch, daemon=True, name="quest-button-diagnostics")
 
     def emit(self, message: str) -> None:
+        if self.debug is not None and not message.startswith("TIMING "):
+            self.debug.event("diagnostic", message=message, frame=self.frame,
+                             stage=message.split(" ", 1)[0])
         print(
             f"[{time.strftime('%H:%M:%S')} +{time.monotonic() - self.started:.3f}s "
             f"frame={self.frame}] {message}",
@@ -69,6 +75,8 @@ class _Diagnostics:
             self._active = (stage, started)
             self._last_warning = float("-inf")
         try:
+            if self.debug is not None:
+                return self.debug.call(stage, function, *args)
             return function(*args)
         finally:
             elapsed = time.monotonic() - started
@@ -124,6 +132,9 @@ def _read_trigger(display: Any, controller_id: int, mask: int, diagnostics: _Dia
             raise ValueError(f"axis[1].x is outside [0, 1]: {value!r}")
         return value, "axis1", "none"
     except Exception as exc:
+        if diagnostics.debug is not None:
+            diagnostics.debug.event("trigger_fallback", side=side, controller_id=controller_id,
+                                    exception=type(exc).__name__, detail=exc, mask=mask)
         return (1.0 if mask & BUTTON_TRIGGER else 0.0), "button_fallback", f"{type(exc).__name__}: {exc}"
 
 
@@ -158,18 +169,34 @@ def run(
     stall_ms: float = 250.0,
     input_gap_s: float = 2.0,
     check_pose: bool = False,
+    backend: str = "openvr",
 ) -> None:
+    debug = get_debug_recorder("button_check")
+    debug.event("run_start", duration_s=duration_s, poll_hz=poll_hz, check_pose=check_pose,
+                alvr_session=alvr_session, no_alvr_wait=no_alvr_wait, backend=backend)
+    if debug.output_dir is not None:
+        print(f"VR diagnostics: {debug.output_dir}", flush=True)
     if not no_alvr_wait:
-        _wait_for_alvr(Path(alvr_session).expanduser())
-    diagnostics = _Diagnostics(stall_ms / 1000.0, input_gap_s)
+        debug.call("wait_for_alvr", _wait_for_alvr, Path(alvr_session).expanduser())
+    diagnostics = _Diagnostics(stall_ms / 1000.0, input_gap_s, debug)
     diagnostics.start()
     try:
-        _monitor(duration_s, poll_hz, report_interval_s, check_pose, diagnostics)
+        # Include backend cleanup in the outer timing. For the legacy SAPIEN
+        # backend this includes native Scene/RenderVRDisplay destruction;
+        # the default input backend only has a balanced OpenVR shutdown.
+        debug.call("monitor_scope", _monitor, duration_s, poll_hz,
+                   report_interval_s, check_pose, diagnostics, backend=backend)
+        debug.event("monitor_returned", reason="duration elapsed")
     except KeyboardInterrupt:
-        diagnostics.emit("Stopping read-only SAPIEN/SteamVR button check.")
+        debug.event("keyboard_interrupt_caught", frame=diagnostics.frame)
+        diagnostics.emit(f"Stopping read-only {backend}/SteamVR button check.")
+    except BaseException as exc:
+        debug.event("run_exception", exception=type(exc).__name__, detail=exc)
+        raise
     finally:
         diagnostics.close()
         diagnostics.report()
+        debug.event("run_finally_complete", frame=diagnostics.frame)
 
 
 def _monitor(
@@ -178,8 +205,37 @@ def _monitor(
     report_interval_s: float,
     check_pose: bool,
     diagnostics: _Diagnostics,
+    *,
+    backend: str = "openvr",
+) -> None:
+    if backend == "sapien":
+        _monitor_sapien(duration_s, poll_hz, report_interval_s, check_pose, diagnostics)
+    elif backend == "openvr":
+        from .openvr_button_input import openvr_button_input
+
+        diagnostics.emit("Read-only OpenVR background button check; no TCP/ROS/robot output.")
+        diagnostics.emit("No SAPIEN scene, Vulkan rendering, compositor access, or frame submission.")
+        diagnostics.emit("packet_unchanged_s measures state-packet changes, not tracking freshness.")
+        diagnostics.emit("Unavailable input may require dismissing the SteamVR dashboard or fixing bindings.")
+        diagnostics.emit("Optional poses use raw OpenVR coordinates; Ctrl-C stops the check.")
+        with openvr_button_input(check_pose=check_pose) as display:
+            _poll_controllers(display, display.prepare_frame, duration_s, poll_hz,
+                              report_interval_s, check_pose, diagnostics)
+    else:
+        raise ValueError(f"Unknown button-check backend: {backend}")
+
+
+def _monitor_sapien(
+    duration_s: float,
+    poll_hz: float,
+    report_interval_s: float,
+    check_pose: bool,
+    diagnostics: _Diagnostics,
 ) -> None:
     sapien = diagnostics.call("sapien_import", _load_sapien)
+    if diagnostics.debug is not None:
+        diagnostics.debug.event("sapien_loaded", path=getattr(sapien, "__file__", None),
+                                version=getattr(sapien, "__version__", None))
     explicit_vr_init = diagnostics.call("vr_configure", _configure_sapien_vr, sapien)
     mode = "explicit enable_vr()" if explicit_vr_init else "RenderVRDisplay constructor"
     diagnostics.emit("Read-only SAPIEN/SteamVR button check; no TCP/ROS/robot output.")
@@ -197,72 +253,128 @@ def _monitor(
     display = diagnostics.call("display_init", sapien.render.RenderVRDisplay)
     display.root_pose = sapien.Pose()
     diagnostics.call("set_scene", display.set_scene, scene)
-    last_ids: tuple[int, ...] | None = None
-    previous: dict[int, tuple[Any, ...] | None] = {value: None for value in CONTROLLERS.values()}
-    deadline = None if duration_s == 0.0 else time.monotonic() + duration_s
-    next_report = time.monotonic()
-    while deadline is None or time.monotonic() < deadline:
-        diagnostics.begin_frame()
-        # Preserve the validated rendering and legacy input read order.
+
+    def prepare_frame() -> None:
+        # Preserve the existing SAPIEN rendering/input refresh order.
         diagnostics.call("scene_update", scene.update_render)
         diagnostics.call("display_update", display.update_render)
         diagnostics.call("render", display.render)
-        ids = tuple(int(value) for value in diagnostics.call("controller_ids", display.get_controller_ids))
-        report_due = time.monotonic() >= next_report
-        ids_changed = ids != last_ids
-        if ids_changed:
-            diagnostics.emit(f"controllers={ids} expected_left=1 expected_right=2")
-            last_ids = ids
-        for side, controller_id in CONTROLLERS.items():
-            if controller_id not in ids:
-                if ids_changed or report_due or previous[controller_id] is not None:
-                    diagnostics.emit(f"{side}: signal=MISSING controller_id={controller_id}")
-                previous[controller_id] = None
-                continue
-            try:
-                mask = int(diagnostics.call(f"{side}_buttons", display.get_controller_button_pressed, controller_id))
-            except Exception as exc:
-                error = ("button_error", type(exc).__name__, str(exc))
-                if report_due or previous[controller_id] != error:
-                    diagnostics.emit(f"{side}: signal=ERROR button_read={type(exc).__name__}: {exc}")
-                previous[controller_id] = error
-                continue
-            trigger, trigger_source, axis_error = _read_trigger(display, controller_id, mask, diagnostics, side)
-            if trigger_source == "axis1":
-                diagnostics.read_completed(side)
-            pose_status = "unchecked"
-            if check_pose:
+
+    _poll_controllers(display, prepare_frame, duration_s, poll_hz,
+                      report_interval_s, check_pose, diagnostics)
+
+
+def _poll_controllers(
+    display: Any,
+    prepare_frame: Callable[[], None],
+    duration_s: float,
+    poll_hz: float,
+    report_interval_s: float,
+    check_pose: bool,
+    diagnostics: _Diagnostics,
+) -> None:
+    last_ids: tuple[int, ...] | None = None
+    previous: dict[str, tuple[Any, ...] | None] = {side: None for side in CONTROLLERS}
+    deadline = None if duration_s == 0.0 else time.monotonic() + duration_s
+    next_report = time.monotonic()
+    try:
+        while deadline is None or time.monotonic() < deadline:
+            diagnostics.begin_frame()
+            prepare_frame()
+            ids = tuple(int(value) for value in diagnostics.call("controller_ids", display.get_controller_ids))
+            controllers = getattr(display, "controllers", CONTROLLERS)
+            report_due = time.monotonic() >= next_report
+            ids_changed = ids != last_ids
+            if ids_changed:
+                diagnostics.emit(f"controllers={ids} side_ids={controllers}")
+                last_ids = ids
+            for side, controller_id in controllers.items():
+                if controller_id not in ids:
+                    if diagnostics.debug is not None:
+                        diagnostics.debug.sample(f"{side}_input", frame=diagnostics.frame,
+                                                 side=side, controller_id=controller_id, present=False)
+                    if ids_changed or report_due or previous[side] is not None:
+                        diagnostics.emit(f"{side}: signal=MISSING controller_id={controller_id}")
+                    previous[side] = None
+                    continue
                 try:
-                    pose = diagnostics.call(f"{side}_pose", display.get_controller_pose, controller_id)
-                    values = (*pose.p, *pose.q)
-                    if len(values) != 7 or not all(math.isfinite(float(value)) for value in values):
-                        raise ValueError("pose must contain seven finite values")
-                    if sum(float(value) ** 2 for value in pose.q) <= 1e-12:
-                        raise ValueError("pose quaternion has zero norm")
-                    pose_status = "FINITE"
+                    mask = int(diagnostics.call(f"{side}_buttons", display.get_controller_button_pressed, controller_id))
                 except Exception as exc:
-                    pose_status = f"ERROR({type(exc).__name__}: {exc})"
-            state = (mask, trigger, trigger_source, axis_error, pose_status)
-            old = previous[controller_id]
-            if (
-                report_due or old is None or old[0] != mask
-                or abs(trigger - old[1]) >= 0.05 or old[2:] != state[2:]
-            ):
-                signal = "OK" if trigger_source == "axis1" and not pose_status.startswith("ERROR") else "DEGRADED"
-                diagnostics.emit(
-                    f"{side}: signal={signal} mask=0x{mask:x} pressed={_button_names(mask, side)} "
-                    f"trigger={trigger:.2f} trigger_source={trigger_source} axis_error={axis_error!r} pose={pose_status}"
-                )
-            previous[controller_id] = state
-        if report_due:
-            diagnostics.report()
-            next_report = time.monotonic() + report_interval_s
-        # Keep the original additional sleep; poll_hz is an upper bound.
-        diagnostics.call("poll_sleep", time.sleep, 1.0 / poll_hz)
+                    if diagnostics.debug is not None:
+                        diagnostics.debug.sample(f"{side}_input", frame=diagnostics.frame, side=side,
+                                                 controller_id=controller_id, present=True,
+                                                 button_error=f"{type(exc).__name__}: {exc}")
+                    error = ("button_error", type(exc).__name__, str(exc))
+                    if report_due or previous[side] != error:
+                        diagnostics.emit(f"{side}: signal=ERROR button_read={type(exc).__name__}: {exc}")
+                    previous[side] = error
+                    continue
+                trigger, trigger_source, axis_error = _read_trigger(display, controller_id, mask, diagnostics, side)
+                if trigger_source == "axis1":
+                    diagnostics.read_completed(side)
+                pose_status = "unchecked"
+                if check_pose:
+                    try:
+                        pose = diagnostics.call(f"{side}_pose", display.get_controller_pose, controller_id)
+                        values = (*pose.p, *pose.q)
+                        if len(values) != 7 or not all(math.isfinite(float(value)) for value in values):
+                            raise ValueError("pose must contain seven finite values")
+                        if sum(float(value) ** 2 for value in pose.q) <= 1e-12:
+                            raise ValueError("pose quaternion has zero norm")
+                        pose_status = "FINITE"
+                    except Exception as exc:
+                        pose_status = f"ERROR({type(exc).__name__}: {exc})"
+                input_available = getattr(display, "input_available", True)
+                details = display.input_details(controller_id) if hasattr(display, "input_details") else {}
+                state = (mask, trigger, trigger_source, axis_error, pose_status, input_available)
+                old = previous[side]
+                if diagnostics.debug is not None and (old is None or old[0] != mask):
+                    diagnostics.debug.event(
+                        "button_state_changed", side=side, controller_id=controller_id,
+                        frame=diagnostics.frame, mask=mask, pressed=mask,
+                        buttons=_button_names(mask, side),
+                    )
+                if (
+                    report_due or old is None or old[0] != mask
+                    or abs(trigger - old[1]) >= 0.05 or old[2:] != state[2:]
+                ):
+                    signal = "OK" if trigger_source == "axis1" and not pose_status.startswith("ERROR") else "DEGRADED"
+                    if not input_available:
+                        signal = "UNAVAILABLE"
+                    extra = "".join(f" {key}={value}" for key, value in details.items())
+                    diagnostics.emit(
+                        f"{side}: signal={signal} mask=0x{mask:x} pressed={_button_names(mask, side)} "
+                        f"trigger={trigger:.2f} trigger_source={trigger_source} axis_error={axis_error!r} pose={pose_status}{extra}"
+                    )
+                previous[side] = state
+                if diagnostics.debug is not None:
+                    diagnostics.debug.sample(
+                        f"{side}_input", frame=diagnostics.frame, side=side,
+                        controller_id=controller_id, present=True, mask=mask, trigger=trigger,
+                        trigger_source=trigger_source, axis_error=axis_error, pose_status=pose_status,
+                        **details,
+                        **({"position": list(values[:3]), "quaternion_wxyz": list(values[3:])}
+                           if check_pose and pose_status == "FINITE" else {}),
+                    )
+            if report_due:
+                diagnostics.report()
+                next_report = time.monotonic() + report_interval_s
+            # Keep the original additional sleep; poll_hz is an upper bound.
+            diagnostics.call("poll_sleep", time.sleep, 1.0 / poll_hz)
+    finally:
+        if diagnostics.debug is not None:
+            exception = sys.exc_info()[0]
+            diagnostics.debug.event(
+                "monitor_scope_exit", frame=diagnostics.frame,
+                exception=None if exception is None else exception.__name__,
+                note="Input loop exited; backend cleanup may follow",
+            )
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Read-only SAPIEN/SteamVR Touch button check")
+    parser = argparse.ArgumentParser(description="Read-only SteamVR Touch button check (input-only OpenVR by default)")
+    parser.add_argument("--backend", choices=("openvr", "sapien"), default="openvr",
+                        help="openvr avoids rendering; sapien retains the legacy VR renderer for diagnostics")
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--poll-hz", type=float, default=60.0)
     parser.add_argument("--alvr-session", default="~/.config/alvr/session.json")
@@ -281,7 +393,7 @@ def main(argv: list[str] | None = None) -> None:
     run(
         args.duration_s, args.poll_hz, args.alvr_session, args.no_alvr_wait,
         report_interval_s=args.report_interval_s, stall_ms=args.stall_ms,
-        input_gap_s=args.input_gap_s, check_pose=args.check_pose,
+        input_gap_s=args.input_gap_s, check_pose=args.check_pose, backend=args.backend,
     )
 
 

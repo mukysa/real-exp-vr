@@ -10,12 +10,17 @@ Physical left Touch Y toggles takeover and return for the selected arm(s).
 Both Touch controllers are tracked in every mode. Hardware mode starts only
 the selected FR3 controller(s): left=172.16.0.3, right=172.16.0.2.
 --left --gripper also homes the Franka Hand and maps left trigger to opening.
+Input-only OpenVR; no SAPIEN rendering or headset video is required.
+--pose-reference=headset-start-position optionally freezes the initial headset
+position as the common origin while retaining standing/calibrated axes.
+--pose-reference=standing (default) retains the existing OpenVR origin.
 EOF
 }
 
 mode=""
 action=""
 left_gripper_enabled=false
+pose_reference=standing
 for argument in "$@"; do
   case "${argument}" in
     --left|--right|--duo)
@@ -27,6 +32,8 @@ for argument in "$@"; do
       action="${argument}"
       ;;
     --gripper) left_gripper_enabled=true ;;
+    --pose-reference=headset-start-position|--pose-reference=standing)
+      pose_reference="${argument#--pose-reference=}" ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -81,7 +88,8 @@ if [[ "${left_gripper_enabled}" == true ]]; then
     echo "Error: Franka Hand manager missing from client ROS build." >&2; exit 1;
   }
 fi
-bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" --global-left-y --dry-run
+bridge_args=(--global-left-y --pose-reference "${pose_reference}")
+bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" "${bridge_args[@]}" --dry-run
 
 if [[ "${action}" == "--check-only" ]]; then
   echo "CHECK OK: mode=${mode}; gripper=${left_gripper_enabled}; both Touch inputs, left Y, selected IK and adapters configured."
@@ -92,7 +100,7 @@ fi
 touch_check="--check-both-touch"
 [[ "${mode}" == "left" ]] && touch_check="--check-left-touch"
 bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" \
-  "${touch_check}" --touch-wait-s 300
+  "${bridge_args[@]}" "${touch_check}" --touch-wait-s 300
 
 for side in "${sides[@]}"; do
   ip="172.16.0.3"
@@ -292,8 +300,12 @@ fi
 
 echo "Hardware chain ready: ${mode}. Left Y takes over selected arm(s); second Y returns."
 echo "Press Ctrl+C at any time to stop. Logs: ${log_dir}"
-start_process openvr bash "${repository_root}/scripts/start_meta_quest_steamvr_bridge.sh" \
-  --side both --host 127.0.0.1 --port 8001
+reference_args=()
+if [[ "${pose_reference}" != standing ]]; then
+  reference_args=(--reference-file "${log_dir}/headset-start-reference.json")
+fi
+start_process openvr bash "${repository_root}/scripts/start_meta_quest_openvr_bridge.sh" \
+  "${bridge_args[@]}" "${reference_args[@]}" --host 127.0.0.1 --port 8001
 bridge_pid="${children[${#children[@]}-1]}"
 declare -A last_source_status last_adapter_status
 while kill -0 "${bridge_pid}" 2>/dev/null; do

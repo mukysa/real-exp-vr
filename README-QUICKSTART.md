@@ -37,6 +37,14 @@ env -u WAYLAND_DISPLAY DISPLAY=:0 /home/landau/.local/share/Steam/steam.sh -appl
 
 ### 2.1 按键前置验证
 
+按键检查默认使用 OpenVR Background 直接读取双手柄，不再创建 SAPIEN
+`Scene`/`RenderVRDisplay`，也不调用渲染、合成或提交 VR 视频帧。正式
+遥操入口同样通过 `start_meta_quest_openvr_bridge.sh` 读取位姿和按键，避免
+在仅有 Intel 集显的 client 上执行应用侧 Vulkan 画面渲染。SteamVR 和
+ALVR 仍须运行，Quest 仍须连接并保持 ALVR `Streaming`；OpenVR 位姿和
+手柄输入继续使用。这里关闭的是应用侧 VR 画面渲染，不是关闭 SteamVR、
+ALVR 或控制器追踪。
+
 在启动任何真机控制或数采入口前，建议先运行只读按键检查：
 
 ```bash
@@ -44,17 +52,17 @@ cd /home/landau/real-exp-vr
 bash scripts/check_quest3_buttons.sh
 ```
 
-脚本会等待 ALVR `Streaming`，然后通过和正式 bridge 相同的 SAPIEN/SteamVR 输入路径读取两只 Touch；它不会打开 TCP 连接，不启动 ROS，也不会发送任何机器人控制。看到类似下面的输出后，依次按下并释放两只手柄的按键：
+脚本会等待 ALVR `Streaming`，然后通过和正式 bridge 相同的 OpenVR 输入路径读取两只 Touch；它不会打开 TCP 连接，不启动 ROS，也不会发送任何机器人控制。看到类似下面的输出后，依次按下并释放两只手柄的按键：
 
 ```text
-controllers=(1, 2) expected_left=1 expected_right=2
+controllers=(1, 2) side_ids={'left': 1, 'right': 2}
 left: signal=OK mask=0x2 pressed=Y trigger=0.00
 right: signal=OK mask=0x2 pressed=B trigger=0.00
 ```
 
 左手柄应将 Y 显示为 `pressed=Y`，右手柄对应显示为 `pressed=B`；`signal=OK` 仅表示设备 ID 存在、按键和扳机轴调用返回了可读值，不保证物理输入正在刷新。确认完成后按 `Ctrl+C`，再继续第 3 节或第 5 节。
 
-检查脚本默认每 2 秒输出状态和 `TIMING`：包括实际循环频率 `loops_hz`、循环最大间隔，以及各阶段平均／最大耗时（毫秒）。保留原有渲染、按键、扳机读取路径，以及每轮额外的轮询休眠，因此 `--poll-hz` 是循环频率上限。
+检查脚本默认每 2 秒输出状态和 `TIMING`：包括实际循环频率 `loops_hz`、循环最大间隔，以及各阶段平均／最大耗时（毫秒）。`--poll-hz` 是轮询频率上限。需要比较旧的 SAPIEN 渲染链路时，可传 `--backend sapien`，但这会重新启用 VR 画面渲染。
 
 排查卡顿、扳机恒为零或遥操的 `Quest input gap` 时，先退出遥操入口，运行以下独立检查并保存日志；`--check-pose` 会额外读取位姿，检查 NaN、无穷或零范数四元数：
 
@@ -62,12 +70,18 @@ right: signal=OK mask=0x2 pressed=B trigger=0.00
 bash scripts/check_quest3_buttons.sh --check-pose 2>&1 | tee /tmp/quest3-buttons-diagnostic.log
 ```
 
-- `STALL stage=render ... call_not_returned=true`：当前调用尚未返回且已经超过默认 250 ms。后台观察线程不调用 VR API；如果原生调用一直占用 Python GIL，报警可能延迟。
-- `SLOW stage=... duration_ms=...`：调用返回后记录的实际耗时。阶段包括 `scene_update`、`display_update`、`render`、`controller_ids`、左右手的 `buttons`／`axis`、可选的 `pose`，以及 `poll_sleep`。
+- `STALL stage=... call_not_returned=true`：当前调用尚未返回且已经超过默认 250 ms。后台观察线程不调用 VR API；如果原生调用一直占用 Python GIL，报警可能延迟。
+- `SLOW stage=... duration_ms=...`：调用返回后记录的实际耗时。OpenVR 后端主要包含 `controller_ids`、左右手的 `buttons`／`axis` 和可选的 `pose` 阶段。
 - `LOOP_GAP`／`READ_GAP`：循环或同一只手的成功轴读取间隔超过默认 2 秒。它测量本地调用完成间隔，不能证明远端跟踪时间戳新鲜，也不包含遥操的 TCP、ROS、IK 链路。
 - `signal=DEGRADED ... trigger_source=button_fallback axis_error=...`：扳机轴读取失败或返回非法值，显示的是按扳机按钮位回退的 0／1，并非正常模拟轴数值。`pose=ERROR(...)` 表示额外位姿检查失败；`pose=FINITE` 仅表示数值有限且四元数非零。
 
 可用 `--report-interval-s 2 --stall-ms 250 --input-gap-s 2` 调整诊断阈值；这些参数仅影响检查脚本的报告，不修改正式遥操的超时或接管条件。
+
+按键检查新增的诊断记录保存在本仓库的 `vr_debug/` 下，
+该目录已加入 `.gitignore`。`VR_DEBUG_CAPTURE=0` 仅关闭独立观察进程，
+`VR_DEBUG_DISABLE=1` 则关闭新增的文件诊断记录和独立观察进程；例如
+`VR_DEBUG_DISABLE=1 bash scripts/check_quest3_buttons.sh --duration-s 30 --check-pose`。
+这两个设置均不改变 OpenVR 输入或渲染后端。
 
 ## 3. 选择机械臂并启动
 
@@ -107,7 +121,13 @@ env -u CYCLONEDDS_URI \
   bash scripts/start_quest3_hardware.sh --duo --enable-hardware
 ```
 
-脚本最多等待 5 分钟：左臂模式确认左实体 Touch `30/30 valid OpenVR poses`；右臂和双臂模式确认左右两只都为 `30/30`，随后才启动所选机械臂。运行中仍监听双手柄按键。等待 `Hardware chain ready` 和所选侧的 `LEFT_SOURCE_STATUS`／`RIGHT_SOURCE_STATUS` 显示 `"state":"READY"`；双臂模式必须**两侧都 READY**，此时才按左 Y。
+脚本最多等待 5 分钟：左臂模式确认左实体 Touch `30/30 valid poses and button reads`；右臂和双臂模式确认左右两只都为 `30/30`，随后才启动所选机械臂。运行中仍监听双手柄按键。等待 `Hardware chain ready` 和所选侧的 `LEFT_SOURCE_STATUS`／`RIGHT_SOURCE_STATUS` 显示 `"state":"READY"`；双臂模式必须**两侧都 READY**，此时才按左 Y。
+
+默认保留原有 `standing` 位姿参考系，禁用渲染本身不会切换坐标原点。
+如需试用 debug 版本新增的启动时头显位置原点，可给启动命令追加
+`--pose-reference=headset-start-position`；它只冻结启动时头显的位置，
+仍保留 standing／标定坐标轴，并将参考信息写入本次日志目录的
+`headset-start-reference.json`。此选项与禁用 VR 渲染相互独立。
 
 第一次短按左 Y 接管所选机械臂：`--left` 跟随左手柄，`--right` 跟随右手柄，`--duo` 同时跟随两只手柄。第二次短按左 Y 返回本轮各自的接管点；回位完成并松开 Y 后可再次接管。右手柄 B 不触发接管。若双臂中任一侧显示适配器 `STOP`，在启动终端按 `Ctrl+C`，排除故障后重启会话。
 
@@ -188,7 +208,7 @@ env -u PYTHONHOME -u PYTHONPATH -u LD_LIBRARY_PATH \
   -m data_collection.lerobot_collection \
   --host 127.0.0.1 --port 5555 \
   --repo-id local/franka_quest_left_teleop \
-  --local-dir ./lerobot_data/quest_left
+  --local-dir ./lerobot_data/quest_left_test1
 ```
 
 左臂处于 `FOLLOWING` 且录制器收到新样本后，在**录制器终端**输入 `s` 回车开始一个 episode；完成动作后输入 `e` 回车保存，再按第二次左 Y 回位。需要丢弃当前 episode 时输入 `d` 回车；结束录制输入 `q` 回车。先停录制器，再分别在 server 和 client 启动终端按 `Ctrl+C`。
@@ -219,8 +239,8 @@ bash scripts/start_data_collection_server.sh \
 
 ```bash
 mkdir -p ~/real-exp-vr/lerobot_data
-scp -rp pair1@192.168.52.160:/home/pair1/real-exp-vr/lerobot_data/quest_left_gripper \
-  ~/real-exp-vr/lerobot_data
+scp -rp pair1@192.168.52.160:/home/pair1/real-exp-vr/lerobot_data/quest_left_test1 \
+  ~/real-exp-vr/lerobot_data/
 ```
 
 复制后的数据集位于 `~/real-exp-vr/lerobot_data/quest_left_gripper`。确认其 `meta/real_exp_trajectory_config.json` 中为 `"end_effector":"gripper"`、`"include_gripper":true` 后再回放。
@@ -238,7 +258,7 @@ conda activate lerobot-vr
 
 ```bash
 bash scripts/replay.sh \
-  --dataset-root ~/real-exp-vr/lerobot_data/quest_left_gripper \
+  --dataset-root ~/real-exp-vr/lerobot_data/quest_left_test1 \
   --episode 0 \
   --left \
   --gripper \

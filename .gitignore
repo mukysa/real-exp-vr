@@ -225,3 +225,5 @@ grasp/runs
 /tools/alvr-*/bin/alvr_dashboard
 
 /tools/alvr-*/bin/alvr_dashboard
+
+/vr_debug/

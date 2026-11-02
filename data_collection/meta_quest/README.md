@@ -12,6 +12,8 @@ Quest 3 实体 Touch → ALVR 20.14.1 → SteamVR/OpenVR
 
 `openvr_bridge.py` 按 ALVR 实体 Touch 的序列号选择控制器，避免虚拟手部追踪设备占用左右手角色时误选。三种真机模式均以 `--global-left-y` 持续发送两只实体手柄的位姿和按键；实体左手柄 Y 提供所选臂的接管／回位，右 B 不触发接管。手柄位姿仍须是有效 OpenVR tracking pose。ALVR 必须处于 `Streaming`，应用保持前台，头显保持唤醒。
 
+输入桥使用 OpenVR Background 直接读取位姿和按键，不创建 SAPIEN 场景或 VR 渲染目标，也不访问 VRCompositor、不提交 VR 视频帧。SteamVR、ALVR 和头显追踪仍须工作；这绕过的是电脑侧应用渲染路径，不会关闭控制器追踪。
+
 原始位姿使用 Quest/Unity 类坐标；`coordinates.py` 把位置转为桌面轴 `+X 前、+Y 左、+Z 上`，把旋转矩阵按 `B R Bᵀ` 换基。真机控制在第一次 Y 时以当前实测 TCP 和手柄位姿作相对锚点。
 
 ## 独立原始录制
