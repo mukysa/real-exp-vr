@@ -22,8 +22,8 @@ def rig():
                            measured_timeout_s=1.0, input_timeout_s=2.0)
     queue = Queue()
     queue.dropped_records = 0
-    outputs, events = [], []
-    logger = SimpleNamespace(info=lambda _: None, warning=lambda _: None)
+    outputs, events, logs = [], [], []
+    logger = SimpleNamespace(info=logs.append, warning=logs.append)
     harness = SimpleNamespace(
         mode="left", hand_arm=True, left_gripper_enabled=False,
         input_timeout_s=2.0, cores={"left": core}, input=HandArmInput(),
@@ -35,14 +35,15 @@ def rig():
         record_status={"state": "recording", "recorder_id": "test", "revision": 1},
         record_status_at=time.monotonic(),
         record_event_publisher=SimpleNamespace(publish=lambda msg: events.append(json.loads(msg.data))),
+        logs=logs,
     )
     harness._couple_faults = lambda: MultiLiveIkNode._couple_faults(harness)
     harness._publish_record_events = lambda now: MultiLiveIkNode._publish_record_events(harness, now)
     base = time.monotonic() - 0.8
 
-    def frame(number, *, b=False, a=False, trigger=0.0, left=True, buttons=True):
+    def frame(number, *, b=False, a=False, trigger=0.0, left=True, buttons=True, dq=0.0):
         timestamp = base + number * 0.04
-        core.update_measured(Q, (0.0,) * 7, timestamp)
+        core.update_measured(Q, (dq,) * 7, timestamp)
         if left:
             # All left controls are held throughout: they must have no effect.
             sample = PoseSample("left", "controller", (0.0, 1.0, 0.0),
@@ -102,3 +103,17 @@ def test_right_input_loss_latches_fault_and_b_cannot_recover_it():
     frame(12, b=True, a=True)
     assert core.state == "FAULT" and len(outputs) == count
     assert events[-1]["operation"] == "toggle"
+
+
+def test_b_reports_stationary_gate_rejection_then_requires_fresh_press():
+    harness, core, outputs, events, frame = rig()
+    frame(4, b=True, dq=.1)
+    assert core.state == 'READY' and not outputs
+    assert any('HAND-ARM B' in line and 'gate_passed=False' in line
+               and 'fresh stationary state' in line for line in harness.logs)
+    frame(5, b=True)
+    assert core.state == 'READY'
+    frame(6)
+    frame(9, b=True)
+    assert core.state == 'FOLLOWING'
+    assert any('state=READY->FOLLOWING' in line for line in harness.logs)

@@ -1,6 +1,6 @@
 # --hand-arm 临时操作说明
 
-日期：2026-11-02。
+更新日期：2026-11-03。
 
 启动流程与原来相同：client 控制机械臂；server 用两个终端分别运行接收脚本和录制器。三个入口均启用 `--hand-arm`。
 
@@ -59,6 +59,12 @@ python data_collection/lerobot_collection.py \
 
 如需另建测试数据集，修改 `--local-dir`。只启动一个录制器。
 
+录制器收到首个有效样本后会打印 `Valid bridge sample received; opening local dataset...`。
+如果指定目录由之前的测试创建、但还没有保存任何 episode，会保留原目录，自动使用
+`原目录_restart`（重名则递增后缀）；以终端实际打印的 `root` 为准。录制仅使用本地文件，
+不会尝试从 Hugging Face 下载缺失文件。有已保存数据但缺少元数据时会报错退出，
+应修复原目录或更换 `--local-dir`，不要删除已有数据。
+
 ## 5. 按键映射
 
 | 输入 | 行为 |
@@ -81,6 +87,29 @@ python data_collection/lerobot_collection.py \
 全程不需要按左手柄按键。开始录制需要有效新鲜样本和 FOLLOWING 状态；开始被拒后，下一次 A 仍尝试开始。B 不会自动结束录制，先保存或丢弃，再回位。
 
 client 的 LEFT_SOURCE_STATUS 中可查看 recorder 状态，server 终端 2 可查看开始、保存、丢弃的结果。
+
+保存视频需要编码时间；按 A 后显示 `saving` 即表示已收到停止请求，等待
+`idle` / `Episode ... saved` 再开始下一条。新版本保存期间保持心跳，
+期间重复按 A/食指扳机不会排队到下一条；原键盘操作保留。
+
+排查按键延迟时，client 会自动输出 `HAND-ARM OpenVR frame=... B=... A=...`
+（原始按钮变化）、`HAND-ARM B ... state=READY->FOLLOWING`（接管结果，含状态
+新鲜度和关节速度）及 `HAND-ARM A ... sent/rejected`（录制请求结果）。相同
+frame 可用于对照输入与执行，`input_age_ms` 只表示接收后到处理的延迟，
+不是手指按下到 OpenVR 的总延迟；真实物理按键体验仍需现场复测。
+
+要继续追加本次已保存的数据，使用实际目录
+`--local-dir ./lerobot_data/quest_left_hand_arm_test1_restart`。
+
+2026-11-03 本轮检查：该目录已有 1 条 / 220 帧 / 15 FPS，约 14.67 秒；
+7 维关节状态及动作、差分动作、末端位姿均为有限值，动作差分一致，
+帧索引连续，`cam_left` H264 视频解码也是 220 帧（424×240）。当前
+Quest 配置只启用 `cam_left`。首、中、尾视频帧已查看，画面正常。
+原日志保存耗时约 1.24 秒，期间心跳中断；修复后 server 隔离测试
+强制额外保存延迟 1.4 秒，心跳最大间隔约 0.214 秒，视频与数据帧数一致。
+录制器修复已备份后同步 server；client Python 源码通过 symlink 安装，
+下次启动生效，不需要重编译。104 项相关测试通过，B 的实际按键延迟
+还需新日志定位，尚未宣称解决。
 
 ## 7. 退出
 

@@ -55,6 +55,25 @@ def test_right_b_short_press_survives_coalescing_and_never_changes_left_pose():
     assert not stream.take().left_y
 
 
+def test_left_before_right_transport_order_delivers_one_b_on_next_fresh_pose():
+    stream = HandArmInput()
+    stream.offer(left(1))
+    stream.offer(buttons(2))
+    assert not stream.take().left_y
+    stream.offer(left(3))
+    stream.offer(buttons(4, b=True))
+    assert not stream.take().left_y
+    stream.offer(left(5))
+    stream.offer(buttons(6, b=True))
+    assert stream.take().left_y
+    assert stream.takeover_event.sequence == 4
+    assert stream.takeover_event.frame_id == 4
+    stream.offer(left(7))
+    stream.offer(buttons(8, b=True))
+    assert not stream.take().left_y
+    assert stream.takeover_event is None
+
+
 def test_a_discard_edges_independent_of_left_tracking_with_hysteresis():
     stream = HandArmInput()
     stream.offer(buttons(1))

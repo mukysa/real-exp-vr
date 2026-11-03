@@ -158,6 +158,30 @@ def _controller_controls(system: Any, controller_id: int, *, single_left: bool =
     return trigger, bool(mask & (BUTTON_Y if single_left else BUTTON_B)), bool(mask & BUTTON_A)
 
 
+class _HandArmButtonTrace:
+    """Log transitions and polling stalls, without logging every pose/axis."""
+
+    def __init__(self):
+        self.levels = None
+        self.last_poll = None
+        self.last_warning = float("-inf")
+
+    def update(self, frame_id, grasp, clutch, record):
+        now = time.monotonic()
+        gap = 0.0 if self.last_poll is None else now - self.last_poll
+        self.last_poll = now
+        trigger = grasp >= (0.25 if self.levels and self.levels[2] else 0.75)
+        levels = (clutch, record, trigger)
+        if levels != self.levels:
+            print(f"HAND-ARM OpenVR frame={frame_id} read_mono_s={now:.6f} "
+                  f"poll_gap_ms={1000 * gap:.1f} B={int(clutch)} A={int(record)} "
+                  f"trigger={int(trigger)}", flush=True)
+            self.levels = levels
+        if gap > 0.1 and now - self.last_warning >= 1.0:
+            print(f"HAND-ARM OpenVR polling slow: gap_ms={1000 * gap:.1f}", flush=True)
+            self.last_warning = now
+
+
 def _physical_controller_id(system: Any, openvr: Any, side: str) -> int:
     """Find the ALVR Touch controller, even if a virtual hand owns its role."""
 
@@ -409,7 +433,12 @@ def run_bridge(args: argparse.Namespace) -> None:
             flush=True,
         )
         with socket.create_connection((args.host, args.port), timeout=3.0) as output:
+            if args.hand_arm:
+                # Left poses and right buttons are small, separate TCP writes.
+                # Do not make buttons wait for Nagle/delayed-ACK batching.
+                output.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             output.settimeout(None)
+            button_trace = _HandArmButtonTrace() if args.hand_arm else None
             frame_id = 0
             sent = 0
             report_start = time.monotonic()
@@ -478,6 +507,7 @@ def run_bridge(args: argparse.Namespace) -> None:
                         if side == "right":
                             if poses[controller_id].bDeviceIsConnected:
                                 grasp, clutch, record = _controller_controls(system, controller_id)
+                                button_trace.update(frame_id, grasp, clutch, record)
                                 line = (f"right buttons|f={frame_id}|t={timestamp_ns}:"
                                         f"{grasp:.9g},{int(clutch)},{int(record)}")
                                 output.sendall(line.encode("utf-8") + b"\n")

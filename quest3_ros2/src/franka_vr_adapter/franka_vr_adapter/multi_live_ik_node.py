@@ -307,6 +307,19 @@ class MultiLiveIkNode(Node):
                 received = frame.poses[side]
                 received = replace(received, sample=replace(received.sample, clutch=y))
                 updates[side] = core.process(received)
+            if hand_arm and frame.left_y:
+                event = self.input.takeover_event
+                core = self.cores["left"]
+                age_ms = 1000 * (now - event.received_monotonic_s) if event else -1
+                measured_age_ms = (1000 * (now - core.measured_stamp)
+                                   if core.measured_stamp is not None else -1)
+                speed = float(np.max(np.abs(core.measured_dq))) if core.measured_dq is not None else None
+                reason = re.sub(r"\bY\b", "B", core.reason)
+                self.get_logger().info(
+                    f"HAND-ARM B frame={event.frame_id if event else None} "
+                    f"input_age_ms={age_ms:.1f} gate_passed={y} "
+                    f"state={states_before['left']}->{core.state} "
+                    f"measured_age_ms={measured_age_ms:.1f} max_dq={speed} reason={reason}")
             if (
                 self.mode == "duo" and y
                 and all(state == "READY" for state in states_before.values())
@@ -354,9 +367,14 @@ class MultiLiveIkNode(Node):
             self.record_session = uuid.uuid4().hex
         for event in self.input.pop_events(now):
             status = self.record_status
+            label = "A" if event.operation == "toggle" else "trigger"
+            trace = (f"HAND-ARM {label} frame={event.frame_id} "
+                     f"input_age_ms={1000 * (now - event.received_monotonic_s):.1f}")
             if (not status or now - self.record_status_at > 1.0
                     or status.get("state") not in {"idle", "recording"}):
-                self.get_logger().warning("Recording command rejected: recorder unavailable or busy")
+                self.get_logger().warning(
+                    f"{trace} rejected: recorder unavailable or busy; "
+                    f"state={status.get('state') if status else 'unavailable'}")
                 continue
             self.record_sequence += 1
             payload = {
@@ -366,6 +384,9 @@ class MultiLiveIkNode(Node):
                 "expires_at": time.time() + max(0.0, 1.0 - (now - event.received_monotonic_s)),
             }
             self.record_event_publisher.publish(String(data=json.dumps(payload, allow_nan=False)))
+            self.get_logger().info(
+                f"{trace} sent: sequence={self.record_sequence} operation={event.operation} "
+                f"recorder_state={status.get('state')}")
 
     def _publish_gripper(self, now: float) -> None:
         core = self.cores["left"]

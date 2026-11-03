@@ -14,6 +14,7 @@ class ButtonEvent:
     connection_id: int
     sequence: int
     received_monotonic_s: float
+    frame_id: int | None = None
 
 
 class HandArmInput:
@@ -38,6 +39,7 @@ class HandArmInput:
         self._pending_b: ButtonEvent | None = None
         self._events: deque[ButtonEvent] = deque(maxlen=32)
         self._last_output_pressed = False
+        self.takeover_event: ButtonEvent | None = None
 
     @property
     def left_y(self):
@@ -85,7 +87,8 @@ class HandArmInput:
             self._down[key] = down
         self.right_b = levels["b"]
         def event(operation):
-            return ButtonEvent(operation, received.connection_id, received.sequence, received.received_monotonic_s)
+            return ButtonEvent(operation, received.connection_id, received.sequence,
+                               received.received_monotonic_s, sample.frame_id)
         if "b" in edges:
             self._pending_b = event("takeover")
         if "trigger" in edges:
@@ -100,6 +103,7 @@ class HandArmInput:
 
     def take(self):
         from data_collection.fr3_ik.live_input import ControlFrame
+        self.takeover_event = None
         if not self.left_ready:
             return None
         self.left_ready = False
@@ -111,6 +115,7 @@ class HandArmInput:
                 self._pending_b = None
             elif left.received_monotonic_s >= event.received_monotonic_s and not self._last_output_pressed:
                 pressed = True
+                self.takeover_event = event
                 self._pending_b = None
         self._last_output_pressed = pressed
         return ControlFrame({"left": left}, pressed)

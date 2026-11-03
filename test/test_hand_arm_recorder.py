@@ -66,7 +66,9 @@ def run_loop(monkeypatch, tmp_path, steps, *, enabled=True):
         def setsockopt(self, *args): pass
         def setsockopt_string(self, *args): pass
         def close(self, *args): pass
-        def recv_pyobj(self):
+        def recv_pyobj(self, flags=0):
+            if flags:
+                raise zmq.Again()
             try:
                 frame, actions = next(iterator)
             except StopIteration:

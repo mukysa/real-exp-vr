@@ -9,12 +9,33 @@ import pytest
 
 from data_collection.meta_quest.openvr_bridge import (
     _AsyncKeepAwake,
+    _HandArmButtonTrace,
     _controller_controls,
     _physical_controller_id,
     _rotation_matrix_to_quaternion,
     openvr_matrix_to_unity_pose,
     parse_args,
 )
+
+
+def test_hand_arm_trace_logs_transitions_and_slow_poll_with_trigger_hysteresis(monkeypatch, capsys):
+    clock = SimpleNamespace(now=0.)
+    monkeypatch.setattr(time, 'monotonic', lambda: clock.now)
+    trace = _HandArmButtonTrace()
+    trace.update(1, 0., False, False)
+    clock.now = .03
+    trace.update(2, .8, True, True)
+    clock.now = .06
+    trace.update(3, .5, True, True)
+    clock.now = .26
+    trace.update(4, .5, True, True)
+    clock.now = .29
+    trace.update(5, .1, False, False)
+    output = capsys.readouterr().out
+    assert 'frame=2' in output and 'B=1 A=1 trigger=1' in output
+    assert 'frame=3' not in output
+    assert 'polling slow: gap_ms=200.0' in output
+    assert output.count('OpenVR frame=') == 3
 
 
 def test_slow_adb_keep_awake_does_not_block_pose_polling() -> None:

@@ -13,6 +13,14 @@ from typing import Any
 import numpy as np
 import zmq
 
+# Recording uses an explicit local directory. Missing/corrupt local files must
+# fail locally instead of blocking the control loop on Hub requests. Set these
+# before importing Hub/Datasets, which cache their offline flags at import.
+if __name__ == "__main__":
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_LEROBOT_SRC = REPO_ROOT / "lerobot" / "src"
 if str(REPO_ROOT) not in sys.path:
@@ -44,6 +52,66 @@ ACTION_CONFIG_PATH = Path("meta/real_exp_action_config.json")
 SYSTEM_FEATURES = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
 DEFAULT_BRIDGE_READY_TIMEOUT_SEC = 2.0
 DEFAULT_VIDEO_CODEC = "h264"
+
+
+def save_episode_responsive(dataset, control, sample_socket=None):
+    """Keep hand-arm heartbeats alive while encoding; ZMQ stays on its owner.
+
+    Only the worker touches the dataset until it completes. Saving still
+    serializes all dataset operations, including quit/finalize. Buttons pressed
+    during a save are rejected instead of becoming commands for the next take.
+    Legacy recorders keep their original synchronous save path.
+    """
+    if control is None:
+        dataset.save_episode()
+        return
+    if control.state != "saving":
+        # Keyboard q / Ctrl+C also save a pending take before finalization.
+        control.begin("e")
+    completed = threading.Event()
+    failures = []
+
+    def save():
+        try:
+            dataset.save_episode()
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            completed.set()
+
+    def service():
+        control.publish()
+        for event in control.drain():
+            control.reject("recorder saving; wait for idle, then release and press again", event)
+        # Do not replay old camera samples after encoding. Never record frames
+        # or access the dataset from this thread while the worker is saving.
+        if sample_socket is not None:
+            for _ in range(32):
+                try:
+                    sample_socket.recv_pyobj(flags=zmq.NOBLOCK)
+                except zmq.Again:
+                    break
+
+    worker = threading.Thread(target=save, name="hand-arm-episode-save")
+    worker.start()
+    interrupted = False
+    try:
+        while True:
+            try:
+                done = completed.wait(0.02)
+                service()
+                if done:
+                    break
+            except KeyboardInterrupt:
+                interrupted = True
+                print("Saving in progress; waiting for disk write before quitting.", flush=True)
+    finally:
+        # Finalization/close must never race the dataset writer.
+        worker.join()
+    if failures:
+        raise failures[0]
+    if interrupted:
+        raise KeyboardInterrupt
 
 
 def clamp_gripper_values(
@@ -372,6 +440,9 @@ def write_action_config(dataset_root: Path, action_config: dict[str, Any]) -> No
 
 def finalize_dataset(dataset: LeRobotDataset, repo_id: str) -> None:
     dataset.finalize()
+    if dataset.meta.total_episodes == 0:
+        # There are no parquet files/stats to load before the first save.
+        return
     ensure_dataset_stats(repo_id, Path(dataset.root), force_recompute=True)
 
 
@@ -462,6 +533,35 @@ def make_dataset(
     features, camera_names = build_features(first_packet)
     action_config = action_config_from_packet(first_packet)
     trajectory_config = trajectory_config_from_packet(first_packet)
+    if is_lerobot_dataset_root(dataset_root):
+        info = json.loads((dataset_root / LEROBOT_INFO_PATH).read_text())
+        if info.get("total_episodes") == 0 and info.get("total_frames") == 0:
+            # create() writes info.json before the first episode, but resume()
+            # expects task/episode parquet files. Missing files make LeRobot
+            # fall back to the Hub and block an offline recorder's control loop.
+            # Preserve the old directory, including any uncommitted artifacts.
+            next_root = derive_compatible_dataset_root(dataset_root, ["restart"])
+            print(
+                f"Existing dataset at {dataset_root} has no saved episodes. "
+                f"Preserving it and creating a new dataset at {next_root}.",
+                flush=True,
+            )
+            dataset_root = next_root
+        else:
+            # Local collection must not silently try downloading incomplete
+            # recording metadata from the Hub. Never bypass this for saved data.
+            missing = []
+            if not (dataset_root / "meta/tasks.parquet").is_file():
+                missing.append("meta/tasks.parquet")
+            if not any((dataset_root / "meta/episodes").rglob("*.parquet")):
+                missing.append("meta/episodes/**/*.parquet")
+            if missing:
+                raise FileNotFoundError(
+                    f"Local dataset {dataset_root} has saved data but is missing "
+                    f"recording metadata: {', '.join(missing)}. "
+                    "Restore the missing files or choose a new --local-dir; "
+                    "no Hub download will be attempted."
+                )
     if is_lerobot_dataset_root(dataset_root):
         dataset = LeRobotDataset.resume(
             repo_id=repo_id,
@@ -765,7 +865,7 @@ def main() -> None:
                                 outcome, detail = "empty", "No recorded frames to save."
                                 print(detail)
                                 continue
-                            dataset.save_episode()
+                            save_episode_responsive(dataset, control, socket)
                             episode_count += 1
                             recording_active = False
                             pending_packet = None
@@ -801,6 +901,7 @@ def main() -> None:
                 continue
 
             if dataset is None:
+                print("Valid bridge sample received; opening local dataset...", flush=True)
                 dataset, camera_names, resumed_dataset = make_dataset(
                     first_packet=packet,
                     repo_id=args.repo_id,
@@ -845,11 +946,14 @@ def main() -> None:
         print("\nStopping collection...")
         if dataset is None or not dataset.has_pending_frames():
             if dataset is None:
-                print("No samples received. Nothing was saved.")
+                if latest_packet is None:
+                    print("No samples received. Nothing was saved.")
+                else:
+                    print("Bridge samples received, but dataset initialization did not complete. Nothing was saved.")
             else:
                 print("No unsaved episode in the recording buffer.")
         else:
-            dataset.save_episode()
+            save_episode_responsive(dataset, control, socket)
             episode_count += 1
             finalize_dataset(dataset, args.repo_id)
             print(f"Episode {episode_count} saved to {dataset.root}")
